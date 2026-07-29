@@ -9,6 +9,8 @@ import type {
   LibraryItem,
   MatchDecision,
   MediaMatch,
+  SourceAction,
+  SourceItem,
   SessionState,
 } from '../types'
 
@@ -27,6 +29,19 @@ export class ApiError extends Error {
 interface UpdateMatchInput {
   jobId: string
   matchId: string
+  decision: MatchDecision
+  candidateTmdbId?: number
+}
+
+interface UpdateSourceItemInput {
+  jobId: string
+  itemId: string
+  action: SourceAction
+}
+
+interface UpdateMediaGroupInput {
+  jobId: string
+  groupKey: string
   decision: MatchDecision
   candidateTmdbId?: number
 }
@@ -79,6 +94,13 @@ export const api = {
     requestJson<Job>(`/jobs/${jobId}/cancel`, { method: 'POST' }),
   getMatches: (jobId: string) =>
     requestJson<MediaMatch[]>(`/jobs/${jobId}/matches`),
+  getSourceItems: (jobId: string) =>
+    requestJson<SourceItem[]>(`/jobs/${jobId}/items`),
+  updateSourceItem: ({ jobId, itemId, action }: UpdateSourceItemInput) =>
+    requestJson<SourceItem>(`/jobs/${jobId}/items/${itemId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ action }),
+    }),
   updateMatch: ({
     jobId,
     matchId,
@@ -92,6 +114,22 @@ export const api = {
         candidate_tmdb_id: candidateTmdbId ?? null,
       }),
     }),
+  updateMediaGroup: ({
+    jobId,
+    groupKey,
+    decision,
+    candidateTmdbId,
+  }: UpdateMediaGroupInput) =>
+    requestJson<{ group_key: string; updated_items: number }>(
+      `/jobs/${jobId}/groups/${encodeURIComponent(groupKey)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          decision,
+          candidate_tmdb_id: candidateTmdbId ?? null,
+        }),
+      },
+    ),
   getDirectories: (parentId = '', parentPath = '/光鸭云盘') => {
     const query = new URLSearchParams({ parent_id: parentId, parent_path: parentPath })
     return requestJson<CloudDirectory[]>(`/cloud/directories?${query.toString()}`)

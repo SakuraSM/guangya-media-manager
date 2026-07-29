@@ -8,8 +8,10 @@ import {
   Sparkles,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
+import { PERCENT_SCALE } from '../constants'
+import { formatBytes } from '../utils/format'
 
 const NAVIGATION_ITEMS = [
   { to: '/', label: '总览', icon: LayoutDashboard, end: true },
@@ -30,6 +32,16 @@ const PAGE_TITLES: Record<string, string> = {
 export function AppShell({ children }: { children: ReactNode }) {
   const currentPath = window.location.pathname.replace(/\/+$/, '') || '/'
   const queryClient = useQueryClient()
+  const dashboardQuery = useQuery({
+    queryKey: ['dashboard'],
+    queryFn: api.getDashboard,
+    refetchInterval: 30_000,
+  })
+  const account = dashboardQuery.data?.account
+  const storagePercentage =
+    account && account.capacity_bytes > 0
+      ? Math.round((account.used_bytes / account.capacity_bytes) * PERCENT_SCALE)
+      : 0
   const logoutMutation = useMutation({
     mutationFn: api.logout,
     onSuccess: () => {
@@ -73,12 +85,16 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="storage-mini">
             <div className="storage-mini-label">
               <span>光鸭云盘</span>
-              <span>67%</span>
+              <span>{account ? `${storagePercentage}%` : '—'}</span>
             </div>
             <div className="progress-track progress-track-small">
-              <span style={{ width: '67%' }} />
+              <span style={{ width: `${storagePercentage}%` }} />
             </div>
-            <small>18.72 TB / 28 TB</small>
+            <small>
+              {account
+                ? `${formatBytes(account.used_bytes)} / ${formatBytes(account.capacity_bytes)}`
+                : '尚未连接账号'}
+            </small>
           </div>
           <button className="nav-item logout-button" type="button" onClick={handleLogout}>
             <LogOut size={19} aria-hidden="true" />

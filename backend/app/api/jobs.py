@@ -10,14 +10,18 @@ from sqlalchemy.orm import selectinload
 
 from app.api.dependencies import DatabaseSession, Services
 from app.database import SessionFactory
-from app.domain import JobStatus
+from app.domain import JobStatus, SourceAction, SourceClassification
 from app.models import AuditEvent, MediaMatch, OrganizeJob, SourceItem
 from app.schemas import (
     CreateJobRequest,
     JobView,
     MatchCandidate,
+    MediaGroupUpdateResult,
     MediaMatchView,
+    SourceItemView,
     UpdateMatchRequest,
+    UpdateMediaGroupRequest,
+    UpdateSourceItemRequest,
 )
 from app.security import require_admin_session
 from app.services.organizer import OrganizerError
@@ -62,6 +66,7 @@ async def scan_job(
         JobStatus.DRAFT,
         JobStatus.FAILED,
         JobStatus.REVIEW_REQUIRED,
+        JobStatus.READY,
     }:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -88,6 +93,107 @@ async def list_matches(
     )
     matches = (await session.scalars(statement)).all()
     return [_to_match_view(media_match) for media_match in matches]
+
+
+@router.get("/{job_id}/items", response_model=list[SourceItemView])
+async def list_source_items(
+    job_id: str,
+    session: DatabaseSession,
+    classification: SourceClassification | None = None,
+) -> list[SourceItemView]:
+    statement = select(SourceItem).where(SourceItem.job_id == job_id)
+    if classification is not None:
+        statement = statement.where(SourceItem.classification == classification)
+    statement = statement.order_by(SourceItem.relative_path.asc())
+    items = (await session.scalars(statement)).all()
+    return [_to_source_item_view(item) for item in items]
+
+
+@router.put("/{job_id}/items/{item_id}", response_model=SourceItemView)
+async def update_source_item(
+    job_id: str,
+    item_id: str,
+    request: UpdateSourceItemRequest,
+    session: DatabaseSession,
+    services: Services,
+) -> SourceItemView:
+    item = await session.scalar(
+        select(SourceItem).where(
+            SourceItem.id == item_id,
+            SourceItem.job_id == job_id,
+        )
+    )
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="扫描项不存在")
+    if (
+        request.action == SourceAction.INCLUDE
+        and item.classification
+        not in {SourceClassification.EXTRA, SourceClassification.UNKNOWN}
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="该类型不能人工恢复",
+        )
+    item.user_action = request.action
+    job = await _get_job_or_404(session, job_id)
+    include_paths_value = job.config.get("include_paths", [])
+    include_paths = {
+        path for path in include_paths_value if isinstance(path, str)
+    } if isinstance(include_paths_value, list) else set()
+    if request.action == SourceAction.INCLUDE:
+        include_paths.add(item.relative_path)
+    else:
+        include_paths.discard(item.relative_path)
+    job.config = {**job.config, "include_paths": sorted(include_paths)}
+    await session.commit()
+    await session.refresh(item)
+    response = _to_source_item_view(item)
+    if job.status in {
+        JobStatus.DRAFT,
+        JobStatus.FAILED,
+        JobStatus.REVIEW_REQUIRED,
+        JobStatus.READY,
+    }:
+        await services.queue.enqueue("scan", job_id)
+    return response
+
+
+@router.put(
+    "/{job_id}/groups/{group_key}",
+    response_model=MediaGroupUpdateResult,
+)
+async def update_media_group(
+    job_id: str,
+    group_key: str,
+    request: UpdateMediaGroupRequest,
+    session: DatabaseSession,
+    services: Services,
+) -> MediaGroupUpdateResult:
+    matches = list(
+        (
+            await session.scalars(
+                select(MediaMatch)
+                .join(SourceItem)
+                .where(
+                    SourceItem.job_id == job_id,
+                    MediaMatch.group_key == group_key,
+                )
+            )
+        ).all()
+    )
+    if not matches:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="媒体分组不存在")
+    for media_match in matches:
+        await services.organizer.update_match(
+            job_id=job_id,
+            match_id=media_match.id,
+            request=UpdateMatchRequest(
+                decision=request.decision,
+                candidate_tmdb_id=request.candidate_tmdb_id,
+            ),
+            session=session,
+        )
+    return MediaGroupUpdateResult(group_key=group_key, updated_items=len(matches))
 
 
 @router.put("/{job_id}/matches/{match_id}", response_model=MediaMatchView)
@@ -189,6 +295,26 @@ def _to_match_view(media_match: MediaMatch) -> MediaMatchView:
         ],
         target_path=media_match.target_path,
         reason_codes=media_match.reason_codes,
+        group_key=media_match.group_key,
+        episode_title=media_match.episode_title,
+        episode_date=media_match.episode_date,
+        release_info=media_match.release_info,
+    )
+
+
+def _to_source_item_view(source_item: SourceItem) -> SourceItemView:
+    return SourceItemView(
+        id=source_item.id,
+        filename=source_item.filename,
+        source_path=source_item.source_path,
+        relative_path=source_item.relative_path,
+        size_bytes=source_item.size_bytes,
+        classification=source_item.classification,
+        filter_reason=source_item.filter_reason,
+        user_action=source_item.user_action,
+        group_key=source_item.group_key,
+        is_reviewable=source_item.classification
+        in {SourceClassification.EXTRA, SourceClassification.UNKNOWN},
     )
 
 

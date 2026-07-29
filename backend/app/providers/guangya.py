@@ -25,6 +25,8 @@ class GuangyaClientProtocol(Protocol):
 
     def refresh_access_token(self, refresh_token: str) -> object: ...
 
+    def user_assets(self) -> object: ...
+
     def fs_list(self, payload: object) -> object: ...
 
     def fs_copy(self, payload: object) -> object: ...
@@ -97,6 +99,17 @@ class GuangyaProvider:
             access_token=_require_string(response, "access_token"),
             refresh_token=_require_string(response, "refresh_token"),
         )
+
+    async def get_storage_usage(self) -> tuple[int, int]:
+        response = _require_mapping(
+            await asyncio.to_thread(self._client.user_assets)
+        )
+        payload = _require_mapping(response.get("data", {}))
+        capacity_bytes = _as_int(payload.get("totalSpaceSize"))
+        used_bytes = _as_int(payload.get("usedSpaceSize"))
+        if capacity_bytes <= 0:
+            raise GuangyaProviderError("Guangya response is missing storage capacity")
+        return capacity_bytes, used_bytes
 
     async def list_directory(self, parent_id: str, parent_path: str) -> list[CloudNode]:
         entries: list[Mapping[str, object]] = []
@@ -220,7 +233,11 @@ def _extract_file_list(response: Mapping[str, object]) -> list[Mapping[str, obje
 def _to_cloud_node(entry: Mapping[str, object], parent_path: str) -> CloudNode:
     node_id = str(entry.get("fileId") or entry.get("id") or "")
     name = str(entry.get("fileName") or entry.get("name") or "未命名")
-    is_directory = bool(entry.get("isDir") or entry.get("fileType") == 0)
+    is_directory = bool(
+        entry.get("isDir")
+        or entry.get("fileType") == 0
+        or _as_int(entry.get("resType")) == 2
+    )
     return CloudNode(
         id=node_id,
         parent_id=str(entry.get("parentId") or ""),

@@ -42,6 +42,9 @@ class DemoGuangyaProvider:
             refresh_token=refresh_token,
         )
 
+    async def get_storage_usage(self) -> tuple[int, int]:
+        return DEMO_CAPACITY_BYTES, DEMO_USED_BYTES
+
     async def list_directory(self, parent_id: str, parent_path: str) -> list[CloudNode]:
         await asyncio.sleep(0.05)
         return [node for node in self._nodes if node.parent_id == parent_id]

@@ -2,19 +2,19 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckCircle2, CircleSlash, Play, Search, TriangleAlert } from 'lucide-react'
 import { api } from '../api/client'
-import { AUTO_APPROVE_THRESHOLD, REVIEW_THRESHOLD } from '../constants'
 import { ErrorNotice } from '../components/ErrorNotice'
+import { GroupedMatchTable } from '../components/GroupedMatchTable'
 import { LoadingScreen } from '../components/LoadingScreen'
 import { MatchInspector } from '../components/MatchInspector'
-import { Poster } from '../components/Poster'
-import { StatusBadge } from '../components/StatusBadge'
+import { ScanSummaryPanel } from '../components/ScanSummaryPanel'
 import {
   JOB_STATUS,
   MATCH_DECISION,
   type MatchDecision,
   type MediaMatch,
 } from '../types'
-import { formatBytes, formatConfidence } from '../utils/format'
+import { formatBytes } from '../utils/format'
+import { episodeLabel, groupMediaMatches } from '../utils/reviewGrouping'
 
 export function ReviewPage() {
   const searchParams = new URLSearchParams(window.location.search)
@@ -35,7 +35,12 @@ export function ReviewPage() {
     enabled: Boolean(selectedJobId),
     refetchInterval: 4_000,
   })
-
+  const sourceItemsQuery = useQuery({
+    queryKey: ['source-items', selectedJobId],
+    queryFn: () => api.getSourceItems(selectedJobId),
+    enabled: Boolean(selectedJobId),
+    refetchInterval: 4_000,
+  })
   const selectedMatch = useMemo(
     () =>
       matchesQuery.data?.find((item) => item.id === selectedMatchId) ??
@@ -80,16 +85,59 @@ export function ReviewPage() {
       await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
     },
   })
+  const groupUpdateMutation = useMutation({
+    mutationFn: () => {
+      if (!selectedMatch || effectiveCandidateId === null) {
+        throw new Error('当前分组没有可批准的 TMDB 候选')
+      }
+      return api.updateMediaGroup({
+        jobId: selectedJobId,
+        groupKey: selectedMatch.group_key,
+        decision: MATCH_DECISION.APPROVED,
+        candidateTmdbId: effectiveCandidateId,
+      })
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['matches', selectedJobId] })
+      await queryClient.invalidateQueries({ queryKey: ['job', selectedJobId] })
+    },
+  })
+  const sourceItemMutation = useMutation({
+    mutationFn: ({
+      itemId,
+      action,
+    }: {
+      itemId: string
+      action: 'DEFAULT' | 'INCLUDE' | 'EXCLUDE'
+    }) => api.updateSourceItem({ jobId: selectedJobId, itemId, action }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ['source-items', selectedJobId],
+      })
+    },
+  })
 
-  if (jobsQuery.isPending || matchesQuery.isPending || jobQuery.isPending) {
+  if (
+    jobsQuery.isPending ||
+    matchesQuery.isPending ||
+    jobQuery.isPending ||
+    sourceItemsQuery.isPending
+  ) {
     return <LoadingScreen label="正在加载匹配审核" />
   }
-  if (jobsQuery.isError || matchesQuery.isError || jobQuery.isError) {
-    const error = jobsQuery.error ?? matchesQuery.error ?? jobQuery.error
+  if (
+    jobsQuery.isError ||
+    matchesQuery.isError ||
+    jobQuery.isError ||
+    sourceItemsQuery.isError
+  ) {
+    const error =
+      jobsQuery.error ?? matchesQuery.error ?? jobQuery.error ?? sourceItemsQuery.error
     return <ErrorNotice message={error?.message ?? '审核数据加载失败'} />
   }
 
   const matches = matchesQuery.data ?? []
+  const matchGroups = groupMediaMatches(matches)
   const job = jobQuery.data
   const reviewCount = matches.filter((item) => isReviewDecision(item.decision)).length
 
@@ -147,6 +195,19 @@ export function ReviewPage() {
           </span>
         </div>
         <button
+          className="button button-secondary"
+          type="button"
+          disabled={
+            !selectedMatch?.group_key ||
+            effectiveCandidateId === null ||
+            groupUpdateMutation.isPending
+          }
+          onClick={() => groupUpdateMutation.mutate()}
+        >
+          <CheckCircle2 size={16} aria-hidden="true" />
+          批准当前整组
+        </button>
+        <button
           className="button button-primary"
           type="button"
           disabled={job.status !== JOB_STATUS.READY || executeMutation.isPending}
@@ -156,6 +217,14 @@ export function ReviewPage() {
           确认并执行
         </button>
       </section>
+
+      <ScanSummaryPanel
+        items={sourceItemsQuery.data ?? []}
+        isSaving={sourceItemMutation.isPending}
+        onChangeAction={(itemId, action) =>
+          sourceItemMutation.mutate({ itemId, action })
+        }
+      />
 
       <div className="review-workspace">
         <aside className="source-browser">
@@ -168,70 +237,42 @@ export function ReviewPage() {
             <span>{job.source_directory_path}</span>
           </div>
           <ul className="source-list">
-            {matches.map((mediaMatch) => (
-              <li key={mediaMatch.id}>
-                <button
-                  type="button"
-                  className={mediaMatch.id === selectedMatch?.id ? 'source-selected' : ''}
-                  onClick={() => handleSelectMatch(mediaMatch)}
-                >
-                  <span className="file-icon" aria-hidden="true">
-                    ▷
-                  </span>
-                  <span>
-                    <strong>{mediaMatch.filename}</strong>
-                    <small>{formatBytes(mediaMatch.size_bytes)}</small>
-                  </span>
-                </button>
+            {matchGroups.map((group) => (
+              <li className="source-group" key={group.key}>
+                <h3>{group.label}</h3>
+                <ul>
+                  {group.items.map((mediaMatch) => (
+                    <li key={mediaMatch.id}>
+                      <button
+                        type="button"
+                        className={
+                          mediaMatch.id === selectedMatch?.id ? 'source-selected' : ''
+                        }
+                        onClick={() => handleSelectMatch(mediaMatch)}
+                      >
+                        <span className="file-icon" aria-hidden="true">
+                          ▷
+                        </span>
+                        <span>
+                          <strong>{episodeLabel(mediaMatch)}</strong>
+                          <small>
+                            {mediaMatch.filename} · {formatBytes(mediaMatch.size_bytes)}
+                          </small>
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               </li>
             ))}
           </ul>
         </aside>
 
-        <section className="match-table-panel" aria-labelledby="match-table-title">
-          <div className="panel-title">
-            <h2 id="match-table-title">AI 识别与 TMDB 匹配</h2>
-            <span>自动通过阈值 90%</span>
-          </div>
-          <div className="match-rows">
-            {matches.map((mediaMatch) => {
-              const selectedCandidate =
-                mediaMatch.candidates.find(
-                  (candidate) => candidate.tmdb_id === mediaMatch.selected_tmdb_id,
-                ) ?? mediaMatch.candidates[0]
-              return (
-                <button
-                  className={`match-row${mediaMatch.id === selectedMatch?.id ? ' match-row-selected' : ''}`}
-                  type="button"
-                  onClick={() => handleSelectMatch(mediaMatch)}
-                  key={mediaMatch.id}
-                >
-                  <Poster
-                    src={selectedCandidate?.poster_url ?? null}
-                    title={selectedCandidate?.title ?? mediaMatch.parsed_title}
-                  />
-                  <span className="match-source">
-                    <strong>{mediaMatch.filename}</strong>
-                    <small>
-                      {mediaMatch.media_type === 'TV' ? '剧集' : '电影'} ·{' '}
-                      {mediaMatch.parsed_year ?? '年份未知'}
-                    </small>
-                  </span>
-                  <span className="match-result">
-                    <strong>{selectedCandidate?.title ?? '未找到候选'}</strong>
-                    <small>
-                      {selectedCandidate?.original_title ?? mediaMatch.parsed_title}
-                    </small>
-                  </span>
-                  <strong className={`confidence confidence-${confidenceTone(mediaMatch.confidence)}`}>
-                    {formatConfidence(mediaMatch.confidence)}
-                  </strong>
-                  <StatusBadge status={mediaMatch.decision} />
-                </button>
-              )
-            })}
-          </div>
-        </section>
+        <GroupedMatchTable
+          groups={matchGroups}
+          selectedMatchId={selectedMatch?.id ?? null}
+          onSelectMatch={handleSelectMatch}
+        />
 
         <MatchInspector
           mediaMatch={selectedMatch}
@@ -244,14 +285,14 @@ export function ReviewPage() {
       </div>
       {updateMutation.isError ? <ErrorNotice message={updateMutation.error.message} /> : null}
       {executeMutation.isError ? <ErrorNotice message={executeMutation.error.message} /> : null}
+      {sourceItemMutation.isError ? (
+        <ErrorNotice message={sourceItemMutation.error.message} />
+      ) : null}
+      {groupUpdateMutation.isError ? (
+        <ErrorNotice message={groupUpdateMutation.error.message} />
+      ) : null}
     </div>
   )
-}
-
-function confidenceTone(confidence: number): 'high' | 'medium' | 'low' {
-  if (confidence >= AUTO_APPROVE_THRESHOLD) return 'high'
-  if (confidence >= REVIEW_THRESHOLD) return 'medium'
-  return 'low'
 }
 
 function isReviewDecision(decision: MatchDecision): boolean {

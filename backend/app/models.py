@@ -1,7 +1,18 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import uuid4
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Float, ForeignKey, String, Text
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from app.domain import (
@@ -11,6 +22,8 @@ from app.domain import (
     MediaType,
     OperationStatus,
     OperationType,
+    SourceAction,
+    SourceClassification,
 )
 
 
@@ -86,6 +99,15 @@ class SourceItem(Base, TimestampMixin):
     extension: Mapped[str] = mapped_column(String(24), default="")
     size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    relative_path: Mapped[str] = mapped_column(String(1024), default="")
+    classification: Mapped[SourceClassification] = mapped_column(
+        String(32), default=SourceClassification.UNKNOWN
+    )
+    filter_reason: Mapped[str] = mapped_column(String(64), default="")
+    user_action: Mapped[SourceAction] = mapped_column(
+        String(16), default=SourceAction.DEFAULT
+    )
+    group_key: Mapped[str] = mapped_column(String(512), default="")
     associated_media_item_id: Mapped[str | None] = mapped_column(
         ForeignKey("source_items.id", ondelete="CASCADE"), nullable=True
     )
@@ -113,6 +135,46 @@ class MediaEntity(Base, TimestampMixin):
     metadata_snapshot: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
 
 
+class MediaSeason(Base, TimestampMixin):
+    __tablename__ = "media_seasons"
+    __table_args__ = (
+        UniqueConstraint("media_entity_id", "season_number", name="uq_media_season"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    media_entity_id: Mapped[str] = mapped_column(
+        ForeignKey("media_entities.id", ondelete="CASCADE")
+    )
+    season_number: Mapped[int] = mapped_column()
+    name: Mapped[str] = mapped_column(String(256), default="")
+    overview: Mapped[str] = mapped_column(Text, default="")
+    poster_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    metadata_snapshot: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+
+    media_entity: Mapped[MediaEntity] = relationship()
+
+
+class MediaEpisode(Base, TimestampMixin):
+    __tablename__ = "media_episodes"
+    __table_args__ = (
+        UniqueConstraint("media_season_id", "episode_number", name="uq_media_episode"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    media_season_id: Mapped[str] = mapped_column(
+        ForeignKey("media_seasons.id", ondelete="CASCADE")
+    )
+    tmdb_id: Mapped[int | None] = mapped_column(nullable=True)
+    episode_number: Mapped[int] = mapped_column()
+    name: Mapped[str] = mapped_column(String(256), default="")
+    overview: Mapped[str] = mapped_column(Text, default="")
+    air_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    still_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    metadata_snapshot: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+
+    media_season: Mapped[MediaSeason] = relationship()
+
+
 class MediaMatch(Base, TimestampMixin):
     __tablename__ = "media_matches"
 
@@ -136,9 +198,25 @@ class MediaMatch(Base, TimestampMixin):
     candidates: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list)
     target_path: Mapped[str] = mapped_column(String(1024), default="")
     reason_codes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    group_key: Mapped[str] = mapped_column(String(512), default="")
+    episode_title: Mapped[str] = mapped_column(String(256), default="")
+    episode_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    release_info: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
 
     source_item: Mapped[SourceItem] = relationship(back_populates="media_match")
     media_entity: Mapped[MediaEntity | None] = relationship()
+
+
+class MediaMatchEpisode(Base):
+    __tablename__ = "media_match_episodes"
+
+    media_match_id: Mapped[str] = mapped_column(
+        ForeignKey("media_matches.id", ondelete="CASCADE"), primary_key=True
+    )
+    media_episode_id: Mapped[str] = mapped_column(
+        ForeignKey("media_episodes.id", ondelete="CASCADE"), primary_key=True
+    )
+    ordinal: Mapped[int] = mapped_column(default=0)
 
 
 class FileOperation(Base, TimestampMixin):

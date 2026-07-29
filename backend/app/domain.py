@@ -29,6 +29,21 @@ class MediaType(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class SourceClassification(StrEnum):
+    MEDIA = "MEDIA"
+    SUBTITLE = "SUBTITLE"
+    EXTRA = "EXTRA"
+    EXISTING_ASSET = "EXISTING_ASSET"
+    IGNORED = "IGNORED"
+    UNKNOWN = "UNKNOWN"
+
+
+class SourceAction(StrEnum):
+    DEFAULT = "DEFAULT"
+    INCLUDE = "INCLUDE"
+    EXCLUDE = "EXCLUDE"
+
+
 class MatchDecision(StrEnum):
     AUTO_APPROVED = "AUTO_APPROVED"
     APPROVED = "APPROVED"

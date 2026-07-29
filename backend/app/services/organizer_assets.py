@@ -3,17 +3,26 @@ from pathlib import PurePosixPath
 import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.domain import MediaType, OperationStatus, OperationType
 from app.models import (
     FileOperation,
     MediaAsset,
+    MediaEpisode,
     MediaMatch,
+    MediaMatchEpisode,
+    MediaSeason,
     OrganizeJob,
 )
 from app.providers.base import CloudNode, CloudProvider
 from app.services.organizer_cloud import MediaDirectories
-from app.services.organizer_support import make_idempotency_key, render_nfo
+from app.services.organizer_support import (
+    make_idempotency_key,
+    render_episode_nfo,
+    render_nfo,
+    render_season_nfo,
+)
 
 ASSET_DOWNLOAD_TIMEOUT_SECONDS = 20
 
@@ -57,17 +66,6 @@ class AssetScraper:
             return
         nfo_content = render_nfo(entity).encode()
         if media_match.media_type == MediaType.TV:
-            episode_name = f"{PurePosixPath(media_match.target_path).stem}.nfo"
-            await self._upload_asset(
-                session=session,
-                job=job,
-                media_match=media_match,
-                parent=directories.leaf,
-                filename=episode_name,
-                content=nfo_content,
-                asset_type="EPISODE_NFO",
-                source_url=None,
-            )
             await self._upload_asset(
                 session=session,
                 job=job,
@@ -78,6 +76,44 @@ class AssetScraper:
                 asset_type="TVSHOW_NFO",
                 source_url=None,
             )
+            season = await self._load_season(session, media_match)
+            if season is not None:
+                await self._upload_asset(
+                    session=session,
+                    job=job,
+                    media_match=media_match,
+                    parent=directories.leaf,
+                    filename="season.nfo",
+                    content=render_season_nfo(season).encode(),
+                    asset_type="SEASON_NFO",
+                    source_url=None,
+                )
+            episodes = await self._load_episodes(session, media_match)
+            if episodes:
+                for episode in episodes:
+                    episode_name = _episode_nfo_name(media_match, episode, len(episodes))
+                    await self._upload_asset(
+                        session=session,
+                        job=job,
+                        media_match=media_match,
+                        parent=directories.leaf,
+                        filename=episode_name,
+                        content=render_episode_nfo(entity, episode).encode(),
+                        asset_type="EPISODE_NFO",
+                        source_url=None,
+                    )
+            else:
+                episode_name = f"{PurePosixPath(media_match.target_path).stem}.nfo"
+                await self._upload_asset(
+                    session=session,
+                    job=job,
+                    media_match=media_match,
+                    parent=directories.leaf,
+                    filename=episode_name,
+                    content=nfo_content,
+                    asset_type="EPISODE_NFO",
+                    source_url=None,
+                )
             return
         await self._upload_asset(
             session=session,
@@ -114,10 +150,11 @@ class AssetScraper:
             and job.config.get("download_season_poster", True)
         ):
             season_number = media_match.season_number or 1
+            season = await self._load_season(session, media_match)
             image_specs.append(
                 (
                     f"season{season_number:02d}-poster.jpg",
-                    entity.poster_url,
+                    season.poster_url if season and season.poster_url else entity.poster_url,
                     directories.leaf,
                     "SEASON_POSTER",
                 )
@@ -144,6 +181,34 @@ class AssetScraper:
                 source_url=source_url,
             )
         return warning_count
+
+    async def _load_season(
+        self, session: AsyncSession, media_match: MediaMatch
+    ) -> MediaSeason | None:
+        if media_match.media_entity_id is None or media_match.season_number is None:
+            return None
+        season: MediaSeason | None = await session.scalar(
+            select(MediaSeason).where(
+                MediaSeason.media_entity_id == media_match.media_entity_id,
+                MediaSeason.season_number == media_match.season_number,
+            )
+        )
+        return season
+
+    async def _load_episodes(
+        self, session: AsyncSession, media_match: MediaMatch
+    ) -> list[MediaEpisode]:
+        statement = (
+            select(MediaEpisode)
+            .join(
+                MediaMatchEpisode,
+                MediaMatchEpisode.media_episode_id == MediaEpisode.id,
+            )
+            .options(selectinload(MediaEpisode.media_season))
+            .where(MediaMatchEpisode.media_match_id == media_match.id)
+            .order_by(MediaMatchEpisode.ordinal)
+        )
+        return list((await session.scalars(statement)).all())
 
     async def _upload_asset(
         self,
@@ -201,3 +266,15 @@ async def _download_asset(url: str) -> bytes | None:
             return response.content
     except httpx.HTTPError:
         return None
+
+
+def _episode_nfo_name(
+    media_match: MediaMatch,
+    episode: MediaEpisode,
+    episode_count: int,
+) -> str:
+    stem = PurePosixPath(media_match.target_path).stem
+    if episode_count == 1:
+        return f"{stem}.nfo"
+    season_number = episode.media_season.season_number
+    return f"{stem}-S{season_number:02d}E{episode.episode_number:02d}.nfo"

@@ -15,8 +15,10 @@ from app.models import (
 )
 from app.schemas import (
     AuditEventView,
+    CloudAccountView,
     DashboardMetrics,
     DashboardView,
+    JobView,
     LibraryItem,
 )
 from app.security import require_admin_session
@@ -88,15 +90,15 @@ async def get_dashboard(session: DatabaseSession) -> DashboardView:
         or 0
     )
     return DashboardView(
-        account=account,
+        account=CloudAccountView.model_validate(account) if account else None,
         metrics=DashboardMetrics(
             pending_review=pending_review or (active_job.review_items if active_job else 0),
             completed_today=completed_today,
             failed=failed or (active_job.failed_items if active_job else 0),
             copied_bytes=copied_bytes,
         ),
-        active_job=active_job,
-        recent_jobs=recent_jobs,
+        active_job=JobView.model_validate(active_job) if active_job else None,
+        recent_jobs=[JobView.model_validate(job) for job in recent_jobs],
         recent_events=[AuditEventView.model_validate(event) for event in recent_events],
     )
 

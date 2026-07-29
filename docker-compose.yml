@@ -35,6 +35,17 @@ services:
       REDIS_URL: redis://redis:6379/0
     ports:
       - "${BIND_HOST:-127.0.0.1}:8000:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     depends_on:
       postgres:
         condition: service_healthy
@@ -45,6 +56,7 @@ services:
     build:
       context: ./backend
     command: python -m app.worker
+    restart: unless-stopped
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://media_manager:media_manager@postgres:5432/media_manager
@@ -53,6 +65,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      api:
         condition: service_healthy
 
   web:

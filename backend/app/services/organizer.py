@@ -7,7 +7,7 @@ from app.models import AuditEvent, MediaMatch, OrganizeJob, SourceItem
 from app.providers.base import CloudProvider
 from app.schemas import CreateJobRequest, UpdateMatchRequest
 from app.schemas import MatchCandidate as MatchCandidateSchema
-from app.services.media_parser import parse_media_filename
+from app.services.media_parser import ParsedMediaName, parse_media_filename
 from app.services.metadata import AiRecognitionService, TmdbService
 from app.services.naming import NamingInput, build_target_relative_path
 from app.services.organizer_execute import ExecutionWorkflow
@@ -144,7 +144,7 @@ class OrganizerService:
         )
         job.review_items = review_items + unresolved_items
         job.approved_items = approved_items
-        job.failed_items = unresolved_items
+        job.failed_items = 0
         job.status = (
             JobStatus.READY
             if review_items + unresolved_items == 0
@@ -157,12 +157,39 @@ class OrganizerService:
 def _target_path_for_candidate(
     media_match: MediaMatch, candidate: MatchCandidateSchema
 ) -> str:
-    parsed = parse_media_filename(media_match.source_item.filename)
+    parsed_from_filename = parse_media_filename(media_match.source_item.filename)
+    quality_tags_value = media_match.release_info.get("quality_tags", [])
+    quality_tags = (
+        tuple(item for item in quality_tags_value if isinstance(item, str))
+        if isinstance(quality_tags_value, list)
+        else ()
+    )
+    release_group_value = media_match.release_info.get("release_group", "")
+    release_group = (
+        release_group_value if isinstance(release_group_value, str) else ""
+    )
+    parsed = ParsedMediaName(
+        media_type=media_match.media_type,
+        title=media_match.parsed_title,
+        year=media_match.parsed_year,
+        season_number=media_match.season_number,
+        episode_numbers=tuple(media_match.episode_numbers),
+        edition=media_match.edition,
+        confidence=media_match.confidence,
+        reason_codes=tuple(media_match.reason_codes),
+        is_ignored=False,
+        episode_date=media_match.episode_date,
+        quality_tags=quality_tags,
+        release_group=release_group,
+        part_number=parsed_from_filename.part_number,
+        context_group=media_match.group_key,
+    )
     return build_target_relative_path(
         NamingInput(
             title=candidate.title,
             year=candidate.year,
             parsed=parsed,
             extension=media_match.source_item.extension,
+            episode_title=media_match.episode_title,
         )
     )

@@ -8,8 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain import AccountStatus
 from app.models import AuditEvent, CloudAccount
 from app.providers.base import CloudProvider, LoginChallenge
-from app.providers.demo import DEMO_CAPACITY_BYTES, DEMO_USED_BYTES
-from app.schemas import CloudLoginStart, CloudLoginStatus
+from app.schemas import CloudAccountView, CloudLoginStart, CloudLoginStatus
 from app.security import TokenCipher
 
 LOGIN_STATUS_PENDING = "PENDING"
@@ -53,6 +52,7 @@ class LoginManager:
             await session.commit()
             return
         self._provider.set_tokens(tokens.access_token, tokens.refresh_token)
+        await self._sync_storage_usage(account, session)
         account.encrypted_refresh_token = self._token_cipher.encrypt(
             tokens.refresh_token
         )
@@ -105,8 +105,7 @@ class LoginManager:
             session.add(account)
         account.status = AccountStatus.CONNECTED
         account.encrypted_refresh_token = self._token_cipher.encrypt(tokens.refresh_token)
-        account.capacity_bytes = DEMO_CAPACITY_BYTES
-        account.used_bytes = DEMO_USED_BYTES
+        await self._sync_storage_usage(account, session)
         session.add(
             AuditEvent(event_type="ACCOUNT_CONNECTED", message="光鸭账号连接成功")
         )
@@ -116,5 +115,22 @@ class LoginManager:
         return CloudLoginStatus(
             login_id=login_id,
             status=LOGIN_STATUS_CONNECTED,
-            account=account,
+            account=CloudAccountView.model_validate(account),
         )
+
+    async def _sync_storage_usage(
+        self, account: CloudAccount, session: AsyncSession
+    ) -> None:
+        try:
+            capacity_bytes, used_bytes = await self._provider.get_storage_usage()
+        except RuntimeError:
+            session.add(
+                AuditEvent(
+                    event_type="ACCOUNT_STORAGE_SYNC_FAILED",
+                    message="暂时无法同步光鸭云盘容量",
+                    severity="warning",
+                )
+            )
+            return
+        account.capacity_bytes = capacity_bytes
+        account.used_bytes = used_bytes

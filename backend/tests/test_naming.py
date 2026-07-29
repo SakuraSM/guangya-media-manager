@@ -25,7 +25,7 @@ def test_builds_movie_path() -> None:
         NamingInput(title="星际穿越", year=2014, parsed=parsed, extension=".mkv")
     )
 
-    assert target_path == "Movies/星际穿越 (2014)/星际穿越 (2014) - REMUX 2160p.mkv"
+    assert target_path == "Movies/星际穿越 (2014)/星际穿越 (2014) - [REMUX 2160p].mkv"
 
 
 def test_builds_tv_multi_episode_path() -> None:
@@ -53,7 +53,7 @@ def test_builds_tv_multi_episode_path() -> None:
 
     assert target_path == (
         "TV/示例剧集 (2024)/Season 02/"
-        "示例剧集 (2024) - S02E03E04 - 新世界.mkv"
+        "示例剧集 (2024) - S02E03E04 - 新世界 - [1080p].mkv"
     )
 
 

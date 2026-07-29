@@ -907,6 +907,7 @@ td small {
 
 .field input,
 .field select,
+.field textarea,
 .search-field input,
 .review-command-bar select {
   width: 100%;
@@ -916,6 +917,16 @@ td small {
   background: #101b2a;
   border: 1px solid var(--border-strong);
   border-radius: 7px;
+}
+
+.field textarea {
+  min-height: 70px;
+  padding-top: 10px;
+  resize: vertical;
+}
+
+.field-wide {
+  grid-column: span 2;
 }
 
 .field select:disabled {
@@ -1119,6 +1130,87 @@ td small {
   font-size: 10px;
 }
 
+.scan-summary-panel {
+  padding: 16px;
+  background: #0b1725;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-medium);
+}
+
+.scan-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 12px 0 0;
+}
+
+.scan-summary-grid > div {
+  padding: 10px 12px;
+  background: #101d2d;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.scan-summary-grid dt {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.scan-summary-grid dd {
+  margin: 5px 0 0;
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.filtered-items {
+  margin-top: 14px;
+}
+
+.filtered-items h3,
+.match-group > h3,
+.source-group > h3 {
+  margin: 0;
+  color: #aebbd0;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.filtered-items ul,
+.source-group ul {
+  padding: 0;
+  margin: 8px 0 0;
+  list-style: none;
+}
+
+.filtered-items li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.filtered-items strong,
+.filtered-items small {
+  display: block;
+}
+
+.filtered-items strong {
+  color: var(--text);
+  font-size: 9px;
+}
+
+.filtered-items small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 8px;
+}
+
 .review-workspace {
   display: grid;
   grid-template-columns: 210px minmax(440px, 1fr) 320px;
@@ -1171,6 +1263,15 @@ td small {
   list-style: none;
 }
 
+.source-group > h3 {
+  padding: 9px 8px 3px;
+}
+
+.source-group + .source-group {
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
 .source-list button {
   display: grid;
   width: 100%;
@@ -1217,6 +1318,12 @@ td small {
 
 .match-rows {
   display: grid;
+}
+
+.match-group > h3 {
+  padding: 10px 12px;
+  background: #0d1928;
+  border-bottom: 1px solid var(--border);
 }
 
 .match-row {

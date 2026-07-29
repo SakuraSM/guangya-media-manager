@@ -35,6 +35,19 @@ export const MATCH_DECISION = {
 export type MatchDecision = (typeof MATCH_DECISION)[keyof typeof MATCH_DECISION]
 export type MediaType = 'MOVIE' | 'TV' | 'UNKNOWN'
 
+export const SOURCE_CLASSIFICATION = {
+  MEDIA: 'MEDIA',
+  SUBTITLE: 'SUBTITLE',
+  EXTRA: 'EXTRA',
+  EXISTING_ASSET: 'EXISTING_ASSET',
+  IGNORED: 'IGNORED',
+  UNKNOWN: 'UNKNOWN',
+} as const
+
+export type SourceClassification =
+  (typeof SOURCE_CLASSIFICATION)[keyof typeof SOURCE_CLASSIFICATION]
+export type SourceAction = 'DEFAULT' | 'INCLUDE' | 'EXCLUDE'
+
 export interface SessionState {
   is_authenticated: boolean
 }
@@ -117,6 +130,27 @@ export interface MediaMatch {
   candidates: MatchCandidate[]
   target_path: string
   reason_codes: string[]
+  group_key: string
+  episode_title: string
+  episode_date: string | null
+  release_info: {
+    quality_tags?: string[]
+    release_group?: string
+    part_number?: number | null
+  }
+}
+
+export interface SourceItem {
+  id: string
+  filename: string
+  source_path: string
+  relative_path: string
+  size_bytes: number
+  classification: SourceClassification
+  filter_reason: string
+  user_action: SourceAction
+  group_key: string
+  is_reviewable: boolean
 }
 
 export interface Dashboard {
@@ -175,5 +209,10 @@ export interface CreateJobInput {
     rename_subtitles: boolean
     auto_approve_threshold: number
     review_threshold: number
+    naming_profile: 'UNIVERSAL_ENHANCED'
+    extras_policy: 'EXCLUDE_REVIEWABLE' | 'INCLUDE'
+    sample_max_mb: number
+    exclude_globs: string[]
+    include_paths: string[]
   }
 }

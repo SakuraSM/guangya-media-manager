@@ -2,7 +2,14 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain import AccountStatus, JobStatus, MatchDecision, MediaType
+from app.domain import (
+    AccountStatus,
+    JobStatus,
+    MatchDecision,
+    MediaType,
+    SourceAction,
+    SourceClassification,
+)
 
 
 class ApiModel(BaseModel):
@@ -55,6 +62,11 @@ class JobConfig(BaseModel):
     rename_subtitles: bool = True
     auto_approve_threshold: float = Field(default=0.9, ge=0.5, le=1)
     review_threshold: float = Field(default=0.65, ge=0, le=0.9)
+    naming_profile: str = Field(default="UNIVERSAL_ENHANCED", max_length=32)
+    extras_policy: str = Field(default="EXCLUDE_REVIEWABLE", max_length=32)
+    sample_max_mb: int = Field(default=300, ge=1, le=10_000)
+    exclude_globs: list[str] = Field(default_factory=list, max_length=50)
+    include_paths: list[str] = Field(default_factory=list, max_length=500)
 
 
 class CreateJobRequest(BaseModel):
@@ -114,6 +126,37 @@ class MediaMatchView(ApiModel):
     candidates: list[MatchCandidate]
     target_path: str
     reason_codes: list[str]
+    group_key: str
+    episode_title: str
+    episode_date: str | None
+    release_info: dict[str, object]
+
+
+class SourceItemView(ApiModel):
+    id: str
+    filename: str
+    source_path: str
+    relative_path: str
+    size_bytes: int
+    classification: SourceClassification
+    filter_reason: str
+    user_action: SourceAction
+    group_key: str
+    is_reviewable: bool
+
+
+class UpdateSourceItemRequest(BaseModel):
+    action: SourceAction
+
+
+class UpdateMediaGroupRequest(BaseModel):
+    decision: MatchDecision
+    candidate_tmdb_id: int | None = None
+
+
+class MediaGroupUpdateResult(BaseModel):
+    group_key: str
+    updated_items: int
 
 
 class UpdateMatchRequest(BaseModel):

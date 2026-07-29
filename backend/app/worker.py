@@ -3,6 +3,8 @@ import json
 import logging
 
 from redis.asyncio import Redis
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from app.bootstrap import build_organizer_service, build_provider
 from app.config import get_settings
@@ -22,11 +24,21 @@ async def run_worker() -> None:
     async with SessionFactory() as session:
         await login_manager.restore_session(session)
     organizer = await build_organizer_service(provider)
-    redis = Redis.from_url(settings.redis_url, decode_responses=True)
+    redis = Redis.from_url(
+        settings.redis_url,
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=10,
+    )
     logger.info("Worker started")
     try:
         while True:
-            queue_item = await redis.brpop(QUEUE_NAME, timeout=5)
+            try:
+                queue_item = await redis.brpop(QUEUE_NAME, timeout=2)
+            except (RedisConnectionError, RedisTimeoutError):
+                logger.warning("Redis queue temporarily unavailable; retrying")
+                await asyncio.sleep(1)
+                continue
             if queue_item is None:
                 continue
             _, raw_payload = queue_item

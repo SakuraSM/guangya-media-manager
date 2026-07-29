@@ -7,9 +7,14 @@ from app.services.media_parser import ParsedMediaName
 
 INVALID_PATH_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 MULTIPLE_SPACES = re.compile(r"\s+")
-SUBTITLE_LANGUAGE = re.compile(
-    r"(?i)(?:^|[._ -])(?P<language>zh(?:-cn|-tw)?|chs|cht|en|eng)$"
+SUBTITLE_LANGUAGE_TOKENS = frozenset(
+    {"zh", "zh-cn", "zh-tw", "chs", "cht", "en", "eng", "ja", "jpn", "ko", "kor"}
 )
+SUBTITLE_FLAG_TOKENS = frozenset({"forced", "default", "sdh", "cc", "hi", "foreign"})
+SUBTITLE_TOKEN_CANONICAL = {
+    "zh-cn": "zh-CN",
+    "zh-tw": "zh-TW",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,7 +47,7 @@ def build_target_relative_path(naming_input: NamingInput) -> str:
         )
         filename = (
             f"{title_with_year} - S{season_number:02d}{episode_token}"
-            f"{episode_title}.{extension}"
+            f"{episode_title}{_release_suffix(naming_input.parsed)}.{extension}"
         )
         return str(
             PurePosixPath(
@@ -53,11 +58,9 @@ def build_target_relative_path(naming_input: NamingInput) -> str:
             )
         )
 
-    edition = (
-        f" - {sanitize_path_segment(naming_input.parsed.edition)}"
-        if naming_input.parsed.edition
-        else ""
-    )
+    edition = _release_suffix(naming_input.parsed)
+    if not edition and naming_input.parsed.edition:
+        edition = f" - {sanitize_path_segment(naming_input.parsed.edition)}"
     filename = f"{title_with_year}{edition}.{extension}"
     return str(PurePosixPath("Movies", title_with_year, filename))
 
@@ -65,8 +68,39 @@ def build_target_relative_path(naming_input: NamingInput) -> str:
 def build_subtitle_filename(media_target_path: str, source_filename: str) -> str:
     media_stem = PurePosixPath(media_target_path).stem
     source_path = PurePosixPath(source_filename)
-    language_match = SUBTITLE_LANGUAGE.search(source_path.stem)
-    language_suffix = (
-        f".{language_match.group('language')}" if language_match else ""
+    suffix_tokens = _subtitle_suffix_tokens(source_path.stem)
+    suffix = "".join(f".{token}" for token in suffix_tokens)
+    return f"{media_stem}{suffix}{source_path.suffix.lower()}"
+
+
+def _release_suffix(parsed: ParsedMediaName) -> str:
+    tags: list[str] = []
+    release_tags = parsed.quality_tags or ((parsed.edition,) if parsed.edition else ())
+    for tag in release_tags:
+        sanitized = sanitize_path_segment(tag)
+        if sanitized and sanitized.casefold() not in {
+            existing.casefold() for existing in tags
+        }:
+            tags.append(sanitized)
+    if not tags and not parsed.release_group:
+        return ""
+    version_label = f" - [{' '.join(tags)}]" if tags else ""
+    release_group = (
+        f"-{sanitize_path_segment(parsed.release_group)}"
+        if parsed.release_group
+        else ""
     )
-    return f"{media_stem}{language_suffix}{source_path.suffix.lower()}"
+    return f"{version_label}{release_group}"
+
+
+def _subtitle_suffix_tokens(stem: str) -> tuple[str, ...]:
+    normalized_tokens = [
+        token.casefold()
+        for token in re.split(r"[._ ]+", stem)
+        if token
+    ]
+    result: list[str] = []
+    for token in normalized_tokens:
+        if token in SUBTITLE_LANGUAGE_TOKENS | SUBTITLE_FLAG_TOKENS and token not in result:
+            result.append(SUBTITLE_TOKEN_CANONICAL.get(token, token))
+    return tuple(result)
