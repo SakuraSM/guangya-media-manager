@@ -1,0 +1,179 @@
+export const ACCOUNT_STATUS = {
+  CONNECTED: 'CONNECTED',
+  REFRESHING: 'REFRESHING',
+  EXPIRED: 'EXPIRED',
+  REAUTH_REQUIRED: 'REAUTH_REQUIRED',
+} as const
+
+export type AccountStatus = (typeof ACCOUNT_STATUS)[keyof typeof ACCOUNT_STATUS]
+
+export const JOB_STATUS = {
+  DRAFT: 'DRAFT',
+  SCANNING: 'SCANNING',
+  IDENTIFYING: 'IDENTIFYING',
+  REVIEW_REQUIRED: 'REVIEW_REQUIRED',
+  READY: 'READY',
+  COPYING: 'COPYING',
+  SCRAPING: 'SCRAPING',
+  FINALIZING: 'FINALIZING',
+  COMPLETED: 'COMPLETED',
+  PARTIAL_FAILED: 'PARTIAL_FAILED',
+  FAILED: 'FAILED',
+  CANCELED: 'CANCELED',
+} as const
+
+export type JobStatus = (typeof JOB_STATUS)[keyof typeof JOB_STATUS]
+
+export const MATCH_DECISION = {
+  AUTO_APPROVED: 'AUTO_APPROVED',
+  APPROVED: 'APPROVED',
+  REVIEW: 'REVIEW',
+  IGNORED: 'IGNORED',
+  UNRESOLVED: 'UNRESOLVED',
+} as const
+
+export type MatchDecision = (typeof MATCH_DECISION)[keyof typeof MATCH_DECISION]
+export type MediaType = 'MOVIE' | 'TV' | 'UNKNOWN'
+
+export interface SessionState {
+  is_authenticated: boolean
+}
+
+export interface CloudAccount {
+  id: string
+  display_name: string
+  status: AccountStatus
+  capacity_bytes: number
+  used_bytes: number
+}
+
+export interface CloudDirectory {
+  id: string
+  parent_id: string
+  name: string
+  path: string
+  item_count: number
+}
+
+export interface CloudLoginStart {
+  login_id: string
+  verification_uri: string
+  expires_in_seconds: number
+  poll_interval_seconds: number
+}
+
+export interface CloudLoginStatus {
+  login_id: string
+  status: 'PENDING' | 'CONNECTED' | 'EXPIRED'
+  account: CloudAccount | null
+  error_message: string | null
+}
+
+export interface Job {
+  id: string
+  name: string
+  source_directory_path: string
+  target_directory_path: string
+  status: JobStatus
+  progress: number
+  current_stage: string
+  total_items: number
+  approved_items: number
+  review_items: number
+  failed_items: number
+  copied_bytes: number
+  error_message: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface MatchCandidate {
+  tmdb_id: number
+  title: string
+  original_title: string
+  year: number | null
+  media_type: MediaType
+  score: number
+  poster_url: string | null
+  backdrop_url: string | null
+  overview: string
+}
+
+export interface MediaMatch {
+  id: string
+  source_item_id: string
+  filename: string
+  source_path: string
+  size_bytes: number
+  media_type: MediaType
+  parsed_title: string
+  parsed_year: number | null
+  season_number: number | null
+  episode_numbers: number[]
+  edition: string
+  confidence: number
+  decision: MatchDecision
+  selected_tmdb_id: number | null
+  candidates: MatchCandidate[]
+  target_path: string
+  reason_codes: string[]
+}
+
+export interface Dashboard {
+  account: CloudAccount | null
+  metrics: {
+    pending_review: number
+    completed_today: number
+    failed: number
+    copied_bytes: number
+  }
+  active_job: Job | null
+  recent_jobs: Job[]
+  recent_events: AuditEvent[]
+}
+
+export interface AuditEvent {
+  id: string
+  event_type: string
+  message: string
+  severity: string
+  created_at: string
+}
+
+export interface LibraryItem {
+  id: string
+  title: string
+  year: number | null
+  media_type: MediaType
+  poster_url: string | null
+  target_path: string
+  source_filename: string
+  completed_at: string
+}
+
+export interface AppSettings {
+  demo_mode: boolean
+  tmdb_configured: boolean
+  ai_configured: boolean
+  ai_base_url: string
+  ai_model: string
+  auto_approve_threshold: number
+  review_threshold: number
+}
+
+export interface CreateJobInput {
+  name: string
+  source_directory_id: string
+  source_directory_path: string
+  target_directory_id: string
+  target_directory_path: string
+  config: {
+    generate_nfo: boolean
+    download_poster: boolean
+    download_fanart: boolean
+    download_season_poster: boolean
+    rename_subtitles: boolean
+    auto_approve_threshold: number
+    review_threshold: number
+  }
+}
