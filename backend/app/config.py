@@ -28,3 +28,26 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def validate_runtime_security(settings: Settings) -> None:
+    if settings.demo_mode:
+        return
+    insecure_values = {
+        "ADMIN_PASSWORD": {"", "change-me"},
+        "SESSION_SECRET": {"", "development-session-secret-change-me"},
+    }
+    configured_values = {
+        "ADMIN_PASSWORD": settings.admin_password,
+        "SESSION_SECRET": settings.session_secret,
+    }
+    invalid_names = [
+        name
+        for name, value in configured_values.items()
+        if value in insecure_values[name] or len(value) < 12
+    ]
+    if invalid_names:
+        joined_names = ", ".join(invalid_names)
+        raise RuntimeError(
+            f"Refusing to start non-demo mode with insecure settings: {joined_names}"
+        )

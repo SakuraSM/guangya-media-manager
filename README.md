@@ -39,6 +39,15 @@ cp .env.example .env
 docker compose up --build
 ```
 
+也可以直接使用 GitHub Container Registry 中由 CI 构建的多架构镜像：
+
+```bash
+cp .env.example .env
+docker compose -f docker-compose.yml -f docker-compose.images.yml up -d
+```
+
+`IMAGE_TAG` 默认为 `latest`，正式部署建议固定到版本标签或 `sha-<commit>` 标签。后端镜像同时供 API 和 Worker 使用。
+
 API 容器启动时会自动执行 Alembic 增量迁移；已有账号、加密 Token、任务和操作记录会保留。
 
 - Web：<http://localhost:4173>
@@ -62,6 +71,8 @@ AI_BASE_URL=https://api.openai.com/v1
 AI_API_KEY=你的AI密钥
 AI_MODEL=gpt-4.1-mini
 ```
+
+非演示模式会拒绝使用默认值或长度不足 12 位的 `ADMIN_PASSWORD`、`SESSION_SECRET`，避免误把开发凭据带入真实云盘部署。
 
 `TOKEN_ENCRYPTION_KEY` 留空时会从 `SESSION_SECRET` 派生独立加密密钥；也可填入 Fernet 格式的 32 字节 URL-safe Base64 密钥。系统默认只应暴露在 NAS 内网。
 
@@ -106,6 +117,17 @@ npm run lint
 npm test
 npm run build
 ```
+
+```bash
+python3 scripts/check-secrets.py
+```
+
+GitHub Actions 会在 Pull Request、`main` 推送、`v*` 标签和手动触发时执行完整测试与隐私扫描。`main`、版本标签及手动触发会发布：
+
+- `ghcr.io/sakurasm/guangya-media-manager-backend`
+- `ghcr.io/sakurasm/guangya-media-manager-web`
+
+流水线只授予镜像发布任务 `packages: write` 权限，第三方 Action 均固定到不可变提交，并生成 SBOM 与构建来源证明。
 
 当前测试覆盖目录上下文与中英文季集解析、多集编号、样片/附加内容/系统文件过滤、AI 异常回退、字幕命名、非法字符、Token 加密、Provider 复制/移动契约、候选改选、设置密钥不回显，以及“审核 → 暂存复制 → 正式 Movies/TV 目录”的集成流程。
 

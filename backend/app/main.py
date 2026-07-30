@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import cloud, dashboard, jobs, session, settings
 from app.bootstrap import build_provider
-from app.config import get_settings
+from app.config import get_settings, validate_runtime_security
 from app.database import SessionFactory, engine
 from app.models import Base
 from app.security import TokenCipher
@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     app_settings = get_settings()
+    validate_runtime_security(app_settings)
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     if app_settings.demo_mode:
