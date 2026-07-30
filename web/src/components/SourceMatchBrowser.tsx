@@ -1,3 +1,4 @@
+import { CircleAlert, Play } from 'lucide-react'
 import type { MediaMatch } from '../types'
 import { formatBytes } from '../utils/format'
 import { episodeLabel, type MediaMatchGroup } from '../utils/reviewGrouping'
@@ -69,13 +70,19 @@ function SourceMatchItem({
         onClick={handleSelect}
       >
         <span className="file-icon" aria-hidden="true">
-          ▷
+          <Play size={12} fill="currentColor" />
         </span>
         <span>
           <strong>{episodeLabel(mediaMatch)}</strong>
           <small>
             {mediaMatch.filename} · {formatBytes(mediaMatch.size_bytes)}
           </small>
+          {mediaMatch.execution_error ? (
+            <small className="source-execution-error">
+              <CircleAlert size={12} aria-hidden="true" />
+              {mediaMatch.execution_error}
+            </small>
+          ) : null}
         </span>
       </button>
     </li>

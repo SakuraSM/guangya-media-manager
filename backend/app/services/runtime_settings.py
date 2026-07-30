@@ -30,9 +30,7 @@ async def load_runtime_settings(
         except ValueError:
             continue
     return RuntimeSettings(
-        tmdb_api_token=stored_values.get(
-            "tmdb_api_token", defaults.tmdb_api_token
-        ),
+        tmdb_api_token=stored_values.get("tmdb_api_token", defaults.tmdb_api_token),
         ai_api_key=stored_values.get("ai_api_key", defaults.ai_api_key),
         ai_base_url=stored_values.get("ai_base_url", defaults.ai_base_url),
         ai_model=stored_values.get("ai_model", defaults.ai_model),

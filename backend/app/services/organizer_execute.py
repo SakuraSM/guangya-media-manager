@@ -19,7 +19,7 @@ from app.services.organizer_cloud import (
     CloudLayout,
     MediaDirectories,
 )
-from app.services.organizer_copy import CopyExecutor
+from app.services.organizer_copy import CopyExecutor, CopyItemResult, CopyPlanItem
 from app.services.organizer_support import (
     OrganizerError,
     fail_job,
@@ -48,8 +48,18 @@ class ExecutionWorkflow:
     async def run(self, job_id: str) -> None:
         async with self._session_factory() as session:
             job = await load_job(session, job_id)
-            if job.status != JobStatus.READY:
+            if job.status not in {JobStatus.READY, JobStatus.PARTIAL_FAILED}:
                 raise OrganizerError(f"Job {job_id} is not ready")
+            if job.status == JobStatus.PARTIAL_FAILED:
+                incomplete_copy_id = await session.scalar(
+                    select(FileOperation.id).where(
+                        FileOperation.job_id == job.id,
+                        FileOperation.operation_type == OperationType.COPY,
+                        FileOperation.status.in_([OperationStatus.FAILED, OperationStatus.RUNNING]),
+                    )
+                )
+                if incomplete_copy_id is None:
+                    raise OrganizerError("当前部分失败任务没有可重试的复制文件")
             matches = await self._load_executable_matches(session, job_id)
             if not matches:
                 raise OrganizerError("No approved media matches")
@@ -62,20 +72,35 @@ class ExecutionWorkflow:
                 media_directories = await self._layout.prepare_media_directories(
                     staging_directory, matches
                 )
-                for item_index, media_match in enumerate(matches, start=1):
-                    await self._copy_match(
-                        session=session,
-                        job=job,
-                        media_match=media_match,
-                        target_directory=media_directories[media_match.id].leaf,
-                        item_index=item_index,
-                        total_items=len(matches),
-                    )
-                    if await _is_cancel_requested(session, job.id):
-                        await self._cancel_job(session, job)
-                        return
+                copy_plan = await self._build_copy_plan(
+                    session,
+                    job,
+                    matches,
+                    media_directories,
+                )
+                job.current_stage = f"整批复制 {len(copy_plan)} 个文件"
+                await session.commit()
+
+                async def should_stop_copying() -> bool:
+                    return await _is_cancel_requested(session, job.id)
+
+                copy_results = await self._copy_executor.execute_plan(
+                    session=session,
+                    job=job,
+                    items=copy_plan,
+                    should_stop=should_stop_copying,
+                )
+                await self._record_copy_results(session, job, copy_results)
                 if await _is_cancel_requested(session, job.id):
                     await self._cancel_job(session, job)
+                    return
+                failed_results = [result for result in copy_results if not result.succeeded]
+                if failed_results:
+                    await self._pause_after_copy_failures(
+                        session,
+                        job,
+                        failed_results,
+                    )
                     return
                 warning_count = await self._scrape_metadata(
                     session, job, matches, media_directories
@@ -83,75 +108,131 @@ class ExecutionWorkflow:
                 if await _is_cancel_requested(session, job.id):
                     await self._cancel_job(session, job)
                     return
-                await self._finalize_job(
-                    session, job, staging_directory, warning_count
-                )
+                await self._finalize_job(session, job, staging_directory, warning_count)
             except (OrganizerError, RuntimeError) as error:
                 await fail_job(session, job, "执行整理失败", error, partial=True)
 
-    async def _begin_copy(
-        self, session: AsyncSession, job: OrganizeJob, item_count: int
-    ) -> None:
+    async def _begin_copy(self, session: AsyncSession, job: OrganizeJob, item_count: int) -> None:
         job.status = JobStatus.COPYING
         job.progress = COPY_PROGRESS_START
-        job.current_stage = "复制媒体文件"
+        job.current_stage = "准备整批执行"
+        job.error_message = None
+        job.failed_items = 0
+        job.config = {
+            key: value for key, value in job.config.items() if key != "_auto_execute_queued"
+        }
         session.add(
             AuditEvent(
                 job_id=job.id,
                 event_type="COPY_STARTED",
-                message=f"开始复制 {item_count} 个媒体文件",
+                message=f"冻结审核计划，开始整批执行 {item_count} 个媒体文件",
             )
         )
         await session.commit()
 
-    async def _copy_match(
+    async def _build_copy_plan(
         self,
-        *,
         session: AsyncSession,
         job: OrganizeJob,
-        media_match: MediaMatch,
-        target_directory: CloudNode,
-        item_index: int,
-        total_items: int,
-    ) -> None:
-        source_item = media_match.source_item
-        final_filename = PurePosixPath(media_match.target_path).name
-        media_copied = await self._copy_executor.copy_and_rename(
-            session=session,
-            job=job,
-            source_item=source_item,
-            target_directory=target_directory,
-            final_filename=final_filename,
-        )
-        copied_bytes = source_item.size_bytes if media_copied else 0
+        matches: list[MediaMatch],
+        directories: dict[str, MediaDirectories],
+    ) -> list[CopyPlanItem]:
+        source_ids = [media_match.source_item.id for media_match in matches]
         subtitles = list(
             (
                 await session.scalars(
-                    select(SourceItem).where(
-                        SourceItem.associated_media_item_id == source_item.id
-                    )
+                    select(SourceItem).where(SourceItem.associated_media_item_id.in_(source_ids))
                 )
             ).all()
         )
+        subtitles_by_media_id: dict[str, list[SourceItem]] = {}
         for subtitle in subtitles:
-            subtitle_copied = await self._copy_executor.copy_and_rename(
-                session=session,
-                job=job,
-                source_item=subtitle,
-                target_directory=target_directory,
-                final_filename=(
-                    build_subtitle_filename(
-                        media_match.target_path, subtitle.filename
-                    )
-                    if job.config.get("rename_subtitles", True)
-                    else subtitle.filename
-                ),
+            if subtitle.associated_media_item_id is None:
+                continue
+            subtitles_by_media_id.setdefault(
+                subtitle.associated_media_item_id,
+                [],
+            ).append(subtitle)
+
+        plan: list[CopyPlanItem] = []
+        for media_match in matches:
+            source_item = media_match.source_item
+            target_directory = directories[media_match.id].leaf
+            plan.append(
+                CopyPlanItem(
+                    source_item=source_item,
+                    target_directory=target_directory,
+                    final_filename=PurePosixPath(media_match.target_path).name,
+                )
             )
-            if subtitle_copied:
-                copied_bytes += subtitle.size_bytes
-        job.copied_bytes += copied_bytes
-        job.progress = COPY_PROGRESS_START + (item_index / total_items) * 0.32
-        job.current_stage = f"复制媒体文件 {item_index}/{total_items}"
+            for subtitle in subtitles_by_media_id.get(source_item.id, []):
+                plan.append(
+                    CopyPlanItem(
+                        source_item=subtitle,
+                        target_directory=target_directory,
+                        final_filename=(
+                            build_subtitle_filename(
+                                media_match.target_path,
+                                subtitle.filename,
+                            )
+                            if job.config.get("rename_subtitles", True)
+                            else subtitle.filename
+                        ),
+                    )
+                )
+        return plan
+
+    async def _record_copy_results(
+        self,
+        session: AsyncSession,
+        job: OrganizeJob,
+        results: list[CopyItemResult],
+    ) -> None:
+        failed_results = [result for result in results if not result.succeeded]
+        job.copied_bytes += sum(result.copied_bytes for result in results)
+        job.failed_items = len(failed_results)
+        job.progress = 0.82
+        job.current_stage = (
+            f"整批复制完成，{len(failed_results)} 个文件失败"
+            if failed_results
+            else f"整批复制完成，共 {len(results)} 个文件"
+        )
+        session.add(
+            AuditEvent(
+                job_id=job.id,
+                event_type="COPY_BATCH_COMPLETED",
+                message=job.current_stage,
+                severity="warning" if failed_results else "info",
+                details={
+                    "total": len(results),
+                    "succeeded": len(results) - len(failed_results),
+                    "failed": len(failed_results),
+                },
+            )
+        )
+        await session.commit()
+
+    async def _pause_after_copy_failures(
+        self,
+        session: AsyncSession,
+        job: OrganizeJob,
+        failed_results: list[CopyItemResult],
+    ) -> None:
+        job.status = JobStatus.PARTIAL_FAILED
+        job.progress = 0.84
+        job.current_stage = f"整批执行完成，{len(failed_results)} 个文件待重试"
+        job.error_message = (
+            f"{len(failed_results)} 个文件执行失败；已成功内容保留在暂存目录，未发布到正式目录"
+        )
+        session.add(
+            AuditEvent(
+                job_id=job.id,
+                event_type="COPY_BATCH_PARTIAL_FAILED",
+                message=job.current_stage,
+                severity="warning",
+                details={"failed": len(failed_results)},
+            )
+        )
         await session.commit()
 
     async def _scrape_metadata(
@@ -165,9 +246,7 @@ class ExecutionWorkflow:
         job.progress = SCRAPE_PROGRESS
         job.current_stage = "生成 NFO 与媒体图片"
         await session.commit()
-        warning_count = await self._asset_scraper.scrape(
-            session, job, matches, directories
-        )
+        warning_count = await self._asset_scraper.scrape(session, job, matches, directories)
         session.add(
             AuditEvent(
                 job_id=job.id,
@@ -203,19 +282,15 @@ class ExecutionWorkflow:
                     target_path=move.target_path,
                     status=OperationStatus.COMPLETED,
                     provider_task_id=move.task_id,
-                    idempotency_key=make_idempotency_key(
-                        "move", job.id, move.target_path
-                    ),
+                    idempotency_key=make_idempotency_key("move", job.id, move.target_path),
                 )
             )
         has_warnings = bool(commit_result.conflicts or warning_count)
-        job.status = (
-            JobStatus.PARTIAL_FAILED if has_warnings else JobStatus.COMPLETED
-        )
+        job.failed_items = 0
+        job.error_message = None
+        job.status = JobStatus.PARTIAL_FAILED if has_warnings else JobStatus.COMPLETED
         job.progress = 1
-        job.current_stage = (
-            "整理完成，存在待处理项" if has_warnings else "整理完成"
-        )
+        job.current_stage = "整理完成，存在待处理项" if has_warnings else "整理完成"
         session.add(
             AuditEvent(
                 job_id=job.id,
@@ -260,17 +335,13 @@ class ExecutionWorkflow:
             )
             .where(
                 SourceItem.job_id == job_id,
-                MediaMatch.decision.in_(
-                    [MatchDecision.AUTO_APPROVED, MatchDecision.APPROVED]
-                ),
+                MediaMatch.decision.in_([MatchDecision.AUTO_APPROVED, MatchDecision.APPROVED]),
             )
         )
         return list((await session.scalars(statement)).all())
 
 
-async def _is_cancel_requested(
-    session: AsyncSession, job_id: str
-) -> bool:
+async def _is_cancel_requested(session: AsyncSession, job_id: str) -> bool:
     is_cancel_requested = await session.scalar(
         select(OrganizeJob.is_cancel_requested).where(OrganizeJob.id == job_id)
     )

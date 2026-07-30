@@ -41,9 +41,7 @@ class GuangyaClientProtocol(Protocol):
 
     def fs_rename(self, payload: object) -> object: ...
 
-    def upload_file(
-        self, file: BytesIO, *, file_name: str, parent_id: str
-    ) -> object: ...
+    def upload_file(self, file: BytesIO, *, file_name: str, parent_id: str) -> object: ...
 
 
 class GuangyaProvider:
@@ -79,9 +77,7 @@ class GuangyaProvider:
             "device_code": device_code,
             "client_id": DEFAULT_CLIENT_ID,
         }
-        response = _require_mapping(
-            await asyncio.to_thread(self._client.auth_token, payload)
-        )
+        response = _require_mapping(await asyncio.to_thread(self._client.auth_token, payload))
         if response.get("error") == "authorization_pending":
             return None
         if "error" in response:
@@ -101,9 +97,7 @@ class GuangyaProvider:
         )
 
     async def get_storage_usage(self) -> tuple[int, int]:
-        response = _require_mapping(
-            await asyncio.to_thread(self._client.user_assets)
-        )
+        response = _require_mapping(await asyncio.to_thread(self._client.user_assets))
         payload = _require_mapping(response.get("data", {}))
         capacity_bytes = _as_int(payload.get("totalSpaceSize"))
         used_bytes = _as_int(payload.get("usedSpaceSize"))
@@ -142,18 +136,14 @@ class GuangyaProvider:
         return ProviderTask(task_id=_extract_task_id(response))
 
     async def task_is_complete(self, task_id: str) -> bool:
-        response = _require_mapping(
-            await asyncio.to_thread(self._client.fs_task_status, task_id)
-        )
+        response = _require_mapping(await asyncio.to_thread(self._client.fs_task_status, task_id))
         payload = _require_mapping(response.get("data", {}))
         status_value = str(payload.get("status", "")).lower()
         if status_value in {"failed", "failure", "error", "-1", "4"}:
             raise GuangyaProviderError("Guangya background task failed")
         return status_value in {"success", "completed", "2", "3"}
 
-    async def resolve_task_nodes(
-        self, task_id: str, parent_path: str
-    ) -> list[CloudNode]:
+    async def resolve_task_nodes(self, task_id: str, parent_path: str) -> list[CloudNode]:
         response = _require_mapping(
             await asyncio.to_thread(self._client.fs_info_by_task_id, task_id)
         )
@@ -163,9 +153,7 @@ class GuangyaProvider:
         elif isinstance(payload, Mapping):
             nested_entries = payload.get("list") or payload.get("files")
             if isinstance(nested_entries, list):
-                entries = [
-                    entry for entry in nested_entries if isinstance(entry, Mapping)
-                ]
+                entries = [entry for entry in nested_entries if isinstance(entry, Mapping)]
             else:
                 entries = [payload]
         else:
@@ -234,9 +222,7 @@ def _to_cloud_node(entry: Mapping[str, object], parent_path: str) -> CloudNode:
     node_id = str(entry.get("fileId") or entry.get("id") or "")
     name = str(entry.get("fileName") or entry.get("name") or "未命名")
     is_directory = bool(
-        entry.get("isDir")
-        or entry.get("fileType") == 0
-        or _as_int(entry.get("resType")) == 2
+        entry.get("isDir") or entry.get("fileType") == 0 or _as_int(entry.get("resType")) == 2
     )
     return CloudNode(
         id=node_id,

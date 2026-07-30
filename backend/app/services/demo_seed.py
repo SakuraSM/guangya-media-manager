@@ -125,6 +125,24 @@ async def seed_demo_data(session: AsyncSession) -> None:
             "三体.Three.Body.2023.E03.2160p.WEB-DL.mkv": "three-body",
             "Unknown.Title.2022.1080p.mkv": "unknown",
         }
+        cloud_metadata_by_filename = {
+            "Interstellar.2014.2160p.BluRay.REMUX.HEVC.mkv": (
+                67 * 1024**3,
+                "demo-interstellar",
+            ),
+            "Breaking.Bad.S01E03.1080p.WEB-DL.mkv": (
+                3 * 1024**3,
+                "demo-breaking-bad",
+            ),
+            "三体.Three.Body.2023.E03.2160p.WEB-DL.mkv": (
+                8 * 1024**3,
+                "demo-three-body",
+            ),
+            "Unknown.Title.2022.1080p.mkv": (
+                5 * 1024**3,
+                "demo-unknown",
+            ),
+        }
         for item_index, demo_match in enumerate(demo_matches, start=1):
             (
                 filename,
@@ -144,8 +162,8 @@ async def seed_demo_data(session: AsyncSession) -> None:
                 source_path=f"/光鸭云盘/未整理/{filename}",
                 filename=filename,
                 extension=".mkv",
-                size_bytes=(8 + item_index * 5) * 1024**3,
-                fingerprint=f"demo-{item_index}",
+                size_bytes=cloud_metadata_by_filename[filename][0],
+                fingerprint=cloud_metadata_by_filename[filename][1],
             )
             entity = MediaEntity(
                 tmdb_id=1000 + item_index,

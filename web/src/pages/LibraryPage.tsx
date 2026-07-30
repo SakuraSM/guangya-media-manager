@@ -61,8 +61,21 @@ export function LibraryPage() {
       ) : (
         <section className="empty-panel">
           <Film size={30} aria-hidden="true" />
-          <h2>媒体库还没有完成项</h2>
-          <p>完成一次整理任务后，电影和剧集会显示在这里。</p>
+          <h2>{searchTerm ? '没有匹配的媒体' : '媒体库还没有完成项'}</h2>
+          <p>
+            {searchTerm
+              ? '换一个片名或清空搜索条件后再试。'
+              : '完成一次整理任务后，电影和剧集会显示在这里。'}
+          </p>
+          {searchTerm ? (
+            <button className="button button-secondary" type="button" onClick={() => setSearchTerm('')}>
+              清空搜索
+            </button>
+          ) : (
+            <a className="button button-secondary" href="/jobs">
+              创建整理任务
+            </a>
+          )}
         </section>
       )}
     </div>

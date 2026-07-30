@@ -41,7 +41,7 @@ export function ReviewPageHeader({
   }
 
   return (
-    <>
+    <div className="review-page-header">
       <ReviewCommandBar
         jobs={jobs}
         job={job}
@@ -64,6 +64,6 @@ export function ReviewPageHeader({
           {actionMessage}
         </p>
       ) : null}
-    </>
+    </div>
   )
 }

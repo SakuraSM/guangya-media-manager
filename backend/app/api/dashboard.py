@@ -70,9 +70,8 @@ async def get_dashboard(session: DatabaseSession) -> DashboardView:
         await session.scalar(
             select(func.coalesce(func.sum(OrganizeJob.approved_items), 0)).where(
                 OrganizeJob.status == JobStatus.COMPLETED,
-                OrganizeJob.updated_at >= datetime.now(UTC).replace(
-                    hour=0, minute=0, second=0, microsecond=0
-                ),
+                OrganizeJob.updated_at
+                >= datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0),
             )
         )
         or 0
@@ -86,8 +85,7 @@ async def get_dashboard(session: DatabaseSession) -> DashboardView:
         or 0
     )
     copied_bytes = int(
-        await session.scalar(select(func.coalesce(func.sum(OrganizeJob.copied_bytes), 0)))
-        or 0
+        await session.scalar(select(func.coalesce(func.sum(OrganizeJob.copied_bytes), 0))) or 0
     )
     return DashboardView(
         account=CloudAccountView.model_validate(account) if account else None,
@@ -111,12 +109,8 @@ async def get_library(session: DatabaseSession) -> list[LibraryItem]:
         .join(SourceItem, SourceItem.id == MediaMatch.source_item_id)
         .join(OrganizeJob, OrganizeJob.id == SourceItem.job_id)
         .where(
-            OrganizeJob.status.in_(
-                [JobStatus.COMPLETED, JobStatus.PARTIAL_FAILED]
-            ),
-            MediaMatch.decision.in_(
-                [MatchDecision.AUTO_APPROVED, MatchDecision.APPROVED]
-            ),
+            OrganizeJob.status.in_([JobStatus.COMPLETED, JobStatus.PARTIAL_FAILED]),
+            MediaMatch.decision.in_([MatchDecision.AUTO_APPROVED, MatchDecision.APPROVED]),
         )
         .order_by(OrganizeJob.updated_at.desc())
     )

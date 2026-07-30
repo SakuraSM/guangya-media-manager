@@ -36,9 +36,7 @@ class LoginManager:
         account.status = AccountStatus.REFRESHING
         await session.commit()
         try:
-            refresh_token = self._token_cipher.decrypt(
-                account.encrypted_refresh_token
-            )
+            refresh_token = self._token_cipher.decrypt(account.encrypted_refresh_token)
             tokens = await self._provider.refresh_tokens(refresh_token)
         except (RuntimeError, ValueError):
             account.status = AccountStatus.REAUTH_REQUIRED
@@ -53,9 +51,7 @@ class LoginManager:
             return
         self._provider.set_tokens(tokens.access_token, tokens.refresh_token)
         await self._sync_storage_usage(account, session)
-        account.encrypted_refresh_token = self._token_cipher.encrypt(
-            tokens.refresh_token
-        )
+        account.encrypted_refresh_token = self._token_cipher.encrypt(tokens.refresh_token)
         account.status = AccountStatus.CONNECTED
         session.add(
             AuditEvent(
@@ -80,9 +76,7 @@ class LoginManager:
             poll_interval_seconds=challenge.poll_interval_seconds,
         )
 
-    async def poll_login(
-        self, login_id: str, session: AsyncSession
-    ) -> CloudLoginStatus:
+    async def poll_login(self, login_id: str, session: AsyncSession) -> CloudLoginStatus:
         pending_login = self._pending_logins.get(login_id)
         if pending_login is None:
             return CloudLoginStatus(
@@ -106,9 +100,7 @@ class LoginManager:
         account.status = AccountStatus.CONNECTED
         account.encrypted_refresh_token = self._token_cipher.encrypt(tokens.refresh_token)
         await self._sync_storage_usage(account, session)
-        session.add(
-            AuditEvent(event_type="ACCOUNT_CONNECTED", message="光鸭账号连接成功")
-        )
+        session.add(AuditEvent(event_type="ACCOUNT_CONNECTED", message="光鸭账号连接成功"))
         await session.commit()
         await session.refresh(account)
         del self._pending_logins[login_id]
@@ -118,9 +110,7 @@ class LoginManager:
             account=CloudAccountView.model_validate(account),
         )
 
-    async def _sync_storage_usage(
-        self, account: CloudAccount, session: AsyncSession
-    ) -> None:
+    async def _sync_storage_usage(self, account: CloudAccount, session: AsyncSession) -> None:
         try:
             capacity_bytes, used_bytes = await self._provider.get_storage_usage()
         except RuntimeError:

@@ -34,19 +34,13 @@ MULTI_EPISODE_PATTERN = re.compile(
 BARE_EPISODE_PATTERN = re.compile(
     r"^(?:第)?(?P<start>\d{1,3})(?:[-至](?P<end>\d{1,3}))?(?:集|话)?$"
 )
-SEASON_DIRECTORY_PATTERN = re.compile(
-    r"(?i)^(?:season[ ._-]*|s)(?P<number>\d{1,2})$"
-)
+SEASON_DIRECTORY_PATTERN = re.compile(r"(?i)^(?:season[ ._-]*|s)(?P<number>\d{1,2})$")
 CHINESE_SEASON_PATTERN = re.compile(r"^第?(?P<number>\d{1,2})季$")
-CHINESE_ORDINAL_SEASON_PATTERN = re.compile(
-    r"第(?P<number>[零〇一二两三四五六七八九十百]+)季"
-)
+CHINESE_ORDINAL_SEASON_PATTERN = re.compile(r"第(?P<number>[零〇一二两三四五六七八九十百]+)季")
 SEASON_IN_DIRECTORY_PATTERN = re.compile(
     r"(?i)(?:^|[ ._-])(?:season[ ._-]*|s|第?)(?P<number>\d{1,2})季?(?:$|[ ._+-])"
 )
-COLLECTION_SUFFIX_PATTERN = re.compile(
-    r"(?i)\s+(?:全?\d+\s*-\s*\d+季|全\d+季|合集).*$"
-)
+COLLECTION_SUFFIX_PATTERN = re.compile(r"(?i)\s+(?:全?\d+\s*-\s*\d+季|全\d+季|合集).*$")
 EPISODE_COUNT_PATTERN = re.compile(r"(?i)(?:全\s*)?\d+\s*集(?:全|完)?")
 SUBTITLE_DESCRIPTION_PATTERN = re.compile(
     r"(?i)(?:内嵌|内封|外挂)?\s*(?:简中|繁中|中字|中文字幕|双语)?\s*字幕"
@@ -247,9 +241,7 @@ def _title_from_season_directory(value: str) -> str:
         return _clean_directory_title(value[: match.start()])
     chinese_match = CHINESE_ORDINAL_SEASON_PATTERN.search(value)
     return (
-        _clean_directory_title(value[: chinese_match.start()])
-        if chinese_match is not None
-        else ""
+        _clean_directory_title(value[: chinese_match.start()]) if chinese_match is not None else ""
     )
 
 

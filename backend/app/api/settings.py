@@ -25,9 +25,7 @@ async def get_app_settings(
     services: Services,
 ) -> SettingsView:
     settings = get_settings()
-    values = await load_runtime_settings(
-        session, services.token_cipher, settings
-    )
+    values = await load_runtime_settings(session, services.token_cipher, settings)
     return SettingsView(
         demo_mode=settings.demo_mode,
         tmdb_configured=bool(values.tmdb_api_token),
@@ -46,9 +44,7 @@ async def update_app_settings(
     services: Services,
 ) -> SettingsView:
     settings = get_settings()
-    current = await load_runtime_settings(
-        session, services.token_cipher, settings
-    )
+    current = await load_runtime_settings(session, services.token_cipher, settings)
     requested_updates = {
         "tmdb_api_token": request.tmdb_api_token,
         "ai_base_url": request.ai_base_url,
@@ -57,9 +53,7 @@ async def update_app_settings(
     }
     for key, value in requested_updates.items():
         if value:
-            await save_runtime_setting(
-                session, services.token_cipher, key, value
-            )
+            await save_runtime_setting(session, services.token_cipher, key, value)
 
     updated = RuntimeSettings(
         tmdb_api_token=request.tmdb_api_token or current.tmdb_api_token,
@@ -67,9 +61,7 @@ async def update_app_settings(
         ai_base_url=request.ai_base_url or current.ai_base_url,
         ai_model=request.ai_model or current.ai_model,
     )
-    apply_runtime_settings(
-        updated, services.tmdb_service, services.ai_service
-    )
+    apply_runtime_settings(updated, services.tmdb_service, services.ai_service)
     session.add(
         AuditEvent(
             event_type="SETTINGS_UPDATED",

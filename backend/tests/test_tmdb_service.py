@@ -12,9 +12,7 @@ from app.services.metadata import MetadataServiceError, TmdbService
 async def test_production_without_token_does_not_return_demo_candidates() -> None:
     service = TmdbService(Settings(tmdb_api_token="", demo_mode=False))
 
-    candidates = await service.search(
-        parse_media_filename("Inception.2010.mkv")
-    )
+    candidates = await service.search(parse_media_filename("Inception.2010.mkv"))
 
     assert candidates == []
 
@@ -33,6 +31,33 @@ async def test_uses_v3_api_key_as_query_parameter(
 
     assert fake_client.parameters["api_key"] == "a" * 32
     assert "Authorization" not in fake_client.headers
+
+
+async def test_uses_configured_tmdb_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_options: dict[str, object] = {}
+    fake_client = FakeAsyncClient()
+
+    def build_client(**options: object) -> FakeAsyncClient:
+        captured_options.update(options)
+        return fake_client
+
+    monkeypatch.setattr(
+        "app.services.metadata.httpx.AsyncClient",
+        build_client,
+    )
+    service = TmdbService(
+        Settings(
+            tmdb_api_token="a" * 32,
+            tmdb_proxy_url="http://host.docker.internal:7890",
+            demo_mode=False,
+        )
+    )
+
+    await service.search(parse_media_filename("Inception.2010.mkv"))
+
+    assert captured_options["proxy"] == "http://host.docker.internal:7890"
 
 
 async def test_reports_tmdb_timeout_reason(

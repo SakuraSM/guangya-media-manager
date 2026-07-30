@@ -44,9 +44,7 @@ class CloudLayout:
             path=job.target_directory_path,
             is_directory=True,
         )
-        staging_root = await self._get_or_create_child(
-            target_root, STAGING_DIRECTORY_NAME
-        )
+        staging_root = await self._get_or_create_child(target_root, STAGING_DIRECTORY_NAME)
         return await self._get_or_create_child(staging_root, job.id)
 
     async def prepare_media_directories(
@@ -116,9 +114,7 @@ class CloudLayout:
             target_child = target_by_name.get(staged_child.name)
             target_child_path = f"{target.path.rstrip('/')}/{staged_child.name}"
             if target_child is None:
-                await self._move_node(
-                    staged_child, target.id, target_child_path, moves
-                )
+                await self._move_node(staged_child, target.id, target_child_path, moves)
                 continue
             if staged_child.is_directory and target_child.is_directory:
                 await self._merge_directory(
@@ -155,9 +151,7 @@ class CloudLayout:
             )
         )
 
-    async def _get_or_create_child(
-        self, parent: CloudNode, name: str
-    ) -> CloudNode:
+    async def _get_or_create_child(self, parent: CloudNode, name: str) -> CloudNode:
         cache_key = f"{parent.id}/{name}"
         cached = self._directory_cache.get(cache_key)
         if cached is not None:
@@ -180,9 +174,7 @@ class CloudLayout:
         self._directory_cache[cache_key] = normalized
         return normalized
 
-    async def _move_and_wait(
-        self, file_ids: list[str], target_parent_id: str
-    ) -> str:
+    async def _move_and_wait(self, file_ids: list[str], target_parent_id: str) -> str:
         task = await self._provider.move_items(file_ids, target_parent_id)
         await wait_for_provider_task(self._provider, task.task_id)
         return task.task_id

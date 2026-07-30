@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     token_encryption_key: str = ""
     demo_mode: bool = True
     tmdb_api_token: str = ""
+    tmdb_proxy_url: str = ""
     ai_base_url: str = "https://api.openai.com/v1"
     ai_api_key: str = ""
     ai_model: str = "gpt-4.1-mini"

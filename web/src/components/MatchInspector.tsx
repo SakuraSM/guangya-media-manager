@@ -1,5 +1,12 @@
 import { useState } from 'react'
-import { Check, CircleSlash, FolderOutput, RotateCcw, Undo2 } from 'lucide-react'
+import {
+  Check,
+  CircleAlert,
+  CircleSlash,
+  FolderOutput,
+  RotateCcw,
+  Undo2,
+} from 'lucide-react'
 import { Poster } from './Poster'
 import { RecognitionNotice } from './RecognitionNotice'
 import {
@@ -56,6 +63,15 @@ export function MatchInspector({
         <h2 id="inspector-title">{mediaMatch.filename}</h2>
       </div>
       <RecognitionNotice mediaMatch={mediaMatch} />
+      {mediaMatch.execution_error ? (
+        <div className="execution-error-notice" role="alert">
+          <CircleAlert size={17} aria-hidden="true" />
+          <span>
+            <strong>执行失败</strong>
+            {mediaMatch.execution_error}
+          </span>
+        </div>
+      ) : null}
       <fieldset className="candidate-list">
         <legend>TMDB 候选匹配（{mediaMatch.candidates.length}）</legend>
         {mediaMatch.candidates.length ? (

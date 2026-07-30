@@ -92,10 +92,7 @@ async def test_rule_parsed_records_are_visible_while_metadata_is_pending() -> No
                 .where(SourceItem.job_id == job_id)
             )
             first_match = await observer_session.scalar(
-                select(MediaMatch)
-                .join(SourceItem)
-                .where(SourceItem.job_id == job_id)
-                .limit(1)
+                select(MediaMatch).join(SourceItem).where(SourceItem.job_id == job_id).limit(1)
             )
     finally:
         tmdb_service.release_search.set()

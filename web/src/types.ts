@@ -47,6 +47,12 @@ export const SOURCE_CLASSIFICATION = {
 export type SourceClassification =
   (typeof SOURCE_CLASSIFICATION)[keyof typeof SOURCE_CLASSIFICATION]
 export type SourceAction = 'DEFAULT' | 'INCLUDE' | 'EXCLUDE'
+export type OperationStatus =
+  | 'PENDING'
+  | 'RUNNING'
+  | 'COMPLETED'
+  | 'SKIPPED'
+  | 'FAILED'
 
 export interface SessionState {
   is_authenticated: boolean
@@ -97,8 +103,18 @@ export interface Job {
   copied_bytes: number
   error_message: string | null
   is_cancel_requested: boolean
+  auto_approve_enabled: boolean
+  auto_execute_after_approval: boolean
   created_at: string
   updated_at: string
+}
+
+export interface JobPage {
+  items: Job[]
+  total: number
+  page: number
+  page_size: number
+  pages: number
 }
 
 export interface MatchCandidate {
@@ -139,6 +155,8 @@ export interface MediaMatch {
     release_group?: string
     part_number?: number | null
   }
+  execution_status?: OperationStatus | null
+  execution_error?: string | null
 }
 
 export interface MediaMatchPage {
@@ -240,6 +258,8 @@ export interface CreateJobInput {
     rename_subtitles: boolean
     auto_approve_threshold: number
     review_threshold: number
+    auto_approve_enabled: boolean
+    auto_execute_after_approval: boolean
     naming_profile: 'UNIVERSAL_ENHANCED'
     extras_policy: 'EXCLUDE_REVIEWABLE' | 'INCLUDE'
     sample_max_mb: number

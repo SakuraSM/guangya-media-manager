@@ -8,6 +8,7 @@ from app.domain import (
     JobStatus,
     MatchDecision,
     MediaType,
+    OperationStatus,
     SourceAction,
     SourceClassification,
 )
@@ -68,6 +69,8 @@ class JobConfig(BaseModel):
     rename_subtitles: bool = True
     auto_approve_threshold: float = Field(default=0.9, ge=0.5, le=1)
     review_threshold: float = Field(default=0.65, ge=0, le=0.9)
+    auto_approve_enabled: bool = True
+    auto_execute_after_approval: bool = False
     naming_profile: str = Field(default="UNIVERSAL_ENHANCED", max_length=32)
     extras_policy: str = Field(default="EXCLUDE_REVIEWABLE", max_length=32)
     sample_max_mb: int = Field(default=300, ge=1, le=10_000)
@@ -99,8 +102,18 @@ class JobView(ApiModel):
     copied_bytes: int
     error_message: str | None
     is_cancel_requested: bool
+    auto_approve_enabled: bool
+    auto_execute_after_approval: bool
     created_at: datetime
     updated_at: datetime
+
+
+class JobPage(BaseModel):
+    items: list[JobView]
+    total: int
+    page: int
+    page_size: int
+    pages: int
 
 
 class MatchCandidate(BaseModel):
@@ -137,6 +150,8 @@ class MediaMatchView(ApiModel):
     episode_title: str
     episode_date: str | None
     release_info: dict[str, object]
+    execution_status: OperationStatus | None = None
+    execution_error: str | None = None
 
 
 class MediaMatchPage(BaseModel):

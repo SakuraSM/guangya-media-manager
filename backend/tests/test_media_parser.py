@@ -3,9 +3,7 @@ from app.services.media_parser import parse_media_filename
 
 
 def test_parses_movie_release_name() -> None:
-    parsed = parse_media_filename(
-        "Interstellar.2014.2160p.BluRay.REMUX.HEVC.DTS-HD.MA.7.1.mkv"
-    )
+    parsed = parse_media_filename("Interstellar.2014.2160p.BluRay.REMUX.HEVC.DTS-HD.MA.7.1.mkv")
 
     assert parsed.media_type == MediaType.MOVIE
     assert parsed.title == "Interstellar"
@@ -95,9 +93,7 @@ def test_parses_date_based_episode() -> None:
 
 
 def test_preserves_release_group_and_quality_tags() -> None:
-    parsed = parse_media_filename(
-        "Movie.2024.2160p.WEB-DL.HDR.HEVC.DDP5.1-GROUP.mkv"
-    )
+    parsed = parse_media_filename("Movie.2024.2160p.WEB-DL.HDR.HEVC.DDP5.1-GROUP.mkv")
 
     assert parsed.quality_tags == ("2160p", "WEB-DL", "HDR", "HEVC", "DDP5.1")
     assert parsed.release_group == "GROUP"
@@ -130,10 +126,7 @@ def test_parses_real_world_chinese_ordinal_season_directory() -> None:
     source_root = "/光鸭云盘/爱情公寓 1-5季+电影+番外 4K"
     parsed = parse_media_filename(
         "01.mp4",
-        parent_path=(
-            f"{source_root}/"
-            "第二季（2011）全20集 内嵌简中字幕 4K"
-        ),
+        parent_path=(f"{source_root}/第二季（2011）全20集 内嵌简中字幕 4K"),
         source_root=source_root,
     )
 
@@ -159,10 +152,7 @@ def test_specials_subdirectory_removes_metadata_suffixes() -> None:
     source_root = "/光鸭云盘/爱情公寓 1-5季+电影+番外 4K"
     parsed = parse_media_filename(
         "01.mp4",
-        parent_path=(
-            f"{source_root}/番外篇/"
-            "开心原力（2016）全6集 内嵌简中字幕 4K"
-        ),
+        parent_path=(f"{source_root}/番外篇/开心原力（2016）全6集 内嵌简中字幕 4K"),
         source_root=source_root,
     )
 

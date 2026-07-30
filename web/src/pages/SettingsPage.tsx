@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bot, CheckCircle2, Cloud, KeyRound, Save, ShieldCheck } from 'lucide-react'
+import { CheckCircle2, Cloud, DatabaseZap, KeyRound, Save, ShieldCheck } from 'lucide-react'
 import { api } from '../api/client'
 import { CloudLoginDialog } from '../components/CloudLoginDialog'
 import { ErrorNotice } from '../components/ErrorNotice'
@@ -95,9 +95,9 @@ export function SettingsPage() {
 
       <form className="settings-section" onSubmit={handleSubmit}>
         <div className="settings-title">
-          <Bot size={21} aria-hidden="true" />
+          <DatabaseZap size={21} aria-hidden="true" />
           <div>
-            <h2>元数据与 AI</h2>
+            <h2>元数据与智能识别</h2>
             <p>密钥只在后端加密保存，前端不会回显。</p>
           </div>
         </div>

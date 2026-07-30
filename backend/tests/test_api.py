@@ -81,6 +81,31 @@ def test_paginates_match_results() -> None:
     assert len(payload["items"]) == 2
 
 
+def test_paginates_job_list() -> None:
+    with TestClient(app) as client:
+        client.post("/api/session/login", json={"password": "change-me"})
+        response = client.get(
+            "/api/jobs/page",
+            params={"page": 1, "page_size": 10},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["page"] == 1
+    assert payload["page_size"] == 10
+    assert payload["total"] >= len(payload["items"])
+    assert payload["pages"] >= 1
+
+
+def test_job_view_exposes_automation_settings() -> None:
+    with TestClient(app) as client:
+        client.post("/api/session/login", json={"password": "change-me"})
+        job = client.get("/api/jobs").json()[0]
+
+    assert isinstance(job["auto_approve_enabled"], bool)
+    assert isinstance(job["auto_execute_after_approval"], bool)
+
+
 def test_batch_approves_selected_matches_atomically() -> None:
     with TestClient(app) as client:
         client.post("/api/session/login", json={"password": "change-me"})
@@ -88,9 +113,7 @@ def test_batch_approves_selected_matches_atomically() -> None:
         review_job = next(job for job in jobs if job["status"] == "REVIEW_REQUIRED")
         matches = client.get(f"/api/jobs/{review_job['id']}/matches").json()["items"]
         selected_matches = [item for item in matches if item["candidates"]][:2]
-        original_decisions = {
-            item["id"]: item["decision"] for item in selected_matches
-        }
+        original_decisions = {item["id"]: item["decision"] for item in selected_matches}
 
         response = client.put(
             f"/api/jobs/{review_job['id']}/matches/batch",
@@ -105,9 +128,7 @@ def test_batch_approves_selected_matches_atomically() -> None:
             },
         )
 
-        refreshed_matches = client.get(
-            f"/api/jobs/{review_job['id']}/matches"
-        ).json()["items"]
+        refreshed_matches = client.get(f"/api/jobs/{review_job['id']}/matches").json()["items"]
         refreshed_by_id = {item["id"]: item for item in refreshed_matches}
         for item in selected_matches:
             client.put(
@@ -120,10 +141,7 @@ def test_batch_approves_selected_matches_atomically() -> None:
 
     assert response.status_code == 200
     assert response.json()["updated_items"] == 2
-    assert all(
-        refreshed_by_id[item["id"]]["decision"] == "APPROVED"
-        for item in selected_matches
-    )
+    assert all(refreshed_by_id[item["id"]]["decision"] == "APPROVED" for item in selected_matches)
 
 
 def test_can_select_a_tmdb_candidate_for_review_match() -> None:
@@ -162,9 +180,7 @@ def test_retries_one_match_without_rescanning_job() -> None:
         matches = client.get(f"/api/jobs/{review_job['id']}/matches").json()["items"]
         media_match = next(item for item in matches if "三体" in item["filename"])
 
-        response = client.post(
-            f"/api/jobs/{review_job['id']}/matches/{media_match['id']}/retry"
-        )
+        response = client.post(f"/api/jobs/{review_job['id']}/matches/{media_match['id']}/retry")
 
     assert response.status_code == 200
     payload = response.json()
@@ -178,9 +194,7 @@ def test_manually_assigns_match_when_automatic_candidates_are_unusable() -> None
         jobs = client.get("/api/jobs").json()
         review_job = next(job for job in jobs if job["status"] == "REVIEW_REQUIRED")
         matches = client.get(f"/api/jobs/{review_job['id']}/matches").json()["items"]
-        media_match = next(
-            item for item in matches if item["decision"] == "UNRESOLVED"
-        )
+        media_match = next(item for item in matches if item["decision"] == "UNRESOLVED")
 
         response = client.post(
             f"/api/jobs/{review_job['id']}/matches/{media_match['id']}/manual",

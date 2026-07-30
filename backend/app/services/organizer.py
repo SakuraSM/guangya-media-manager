@@ -62,6 +62,7 @@ class OrganizerService:
         tmdb_service: TmdbService,
         ai_service: AiRecognitionService,
     ) -> None:
+        self._session_factory = session_factory
         self._scan_workflow = ScanWorkflow(
             session_factory=session_factory,
             provider=provider,
@@ -78,9 +79,7 @@ class OrganizerService:
             ai_service=ai_service,
         )
 
-    async def create_job(
-        self, request: CreateJobRequest, session: AsyncSession
-    ) -> OrganizeJob:
+    async def create_job(self, request: CreateJobRequest, session: AsyncSession) -> OrganizeJob:
         job = OrganizeJob(
             name=request.name,
             source_directory_id=request.source_directory_id,
@@ -104,6 +103,25 @@ class OrganizerService:
     async def run_action(self, action: str, job_id: str) -> None:
         if action == "scan":
             await self._scan_workflow.run(job_id)
+            async with self._session_factory() as session:
+                job = await load_job(session, job_id)
+                should_auto_execute = job.status == JobStatus.READY and bool(
+                    job.config.get(
+                        "auto_execute_after_approval",
+                        False,
+                    )
+                )
+                if should_auto_execute:
+                    session.add(
+                        AuditEvent(
+                            job_id=job.id,
+                            event_type="AUTO_EXECUTE_STARTED",
+                            message="审批已完成，自动开始整批整理",
+                        )
+                    )
+                    await session.commit()
+            if should_auto_execute:
+                await self._execution_workflow.run(job_id)
             return
         if action == "execute":
             await self._execution_workflow.run(job_id)
@@ -132,9 +150,7 @@ class OrganizerService:
             candidate_schema = validate_candidate(candidate)
             media_match.media_entity_id = entity.id
             media_match.confidence = candidate_schema.score
-            media_match.target_path = _target_path_for_candidate(
-                media_match, candidate_schema
-            )
+            media_match.target_path = _target_path_for_candidate(media_match, candidate_schema)
 
         media_match.decision = request.decision
         session.add(
@@ -186,9 +202,7 @@ class OrganizerService:
                 item.candidate_tmdb_id,
             )
             if candidate is None:
-                raise OrganizerError(
-                    f"文件 {media_match.source_item.filename} 的候选不存在"
-                )
+                raise OrganizerError(f"文件 {media_match.source_item.filename} 的候选不存在")
             approval_candidates.append((media_match, candidate))
         for media_match, candidate in approval_candidates:
             entity = await persist_candidate_payload(session, candidate)
@@ -238,9 +252,7 @@ class OrganizerService:
         if not matches:
             raise OrganizerError("Media group not found")
 
-        validated_candidates: list[
-            tuple[MediaMatch, dict[str, object] | None]
-        ] = []
+        validated_candidates: list[tuple[MediaMatch, dict[str, object] | None]] = []
         for media_match in matches:
             candidate = (
                 find_candidate(
@@ -251,9 +263,7 @@ class OrganizerService:
                 else None
             )
             if request.candidate_tmdb_id is not None and candidate is None:
-                raise OrganizerError(
-                    f"文件 {media_match.source_item.filename} 的候选不存在"
-                )
+                raise OrganizerError(f"文件 {media_match.source_item.filename} 的候选不存在")
             validated_candidates.append((media_match, candidate))
 
         for media_match, candidate in validated_candidates:
@@ -299,9 +309,7 @@ class OrganizerService:
         resolution = await self._metadata_resolver.resolve(
             MetadataResolutionRequest(
                 filename=media_match.source_item.filename,
-                parent_path=str(
-                    PurePosixPath(media_match.source_item.relative_path).parent
-                ),
+                parent_path=str(PurePosixPath(media_match.source_item.relative_path).parent),
                 parsed=parsed,
             )
         )
@@ -309,12 +317,8 @@ class OrganizerService:
         candidates = list(resolution.candidates)
         decision, confidence = decide_match(
             candidates=candidates,
-            auto_threshold=read_config_float(
-                job.config, "auto_approve_threshold", 0.9
-            ),
-            review_threshold=read_config_float(
-                job.config, "review_threshold", 0.65
-            ),
+            auto_threshold=read_config_float(job.config, "auto_approve_threshold", 0.9),
+            review_threshold=read_config_float(job.config, "review_threshold", 0.65),
         )
         if resolution.requires_manual_confirmation and candidates:
             decision = MatchDecision.REVIEW
@@ -333,9 +337,7 @@ class OrganizerService:
         media_match.edition = parsed.edition
         media_match.confidence = confidence
         media_match.decision = decision
-        media_match.candidates = [
-            candidate_to_dict(candidate) for candidate in candidates
-        ]
+        media_match.candidates = [candidate_to_dict(candidate) for candidate in candidates]
         media_match.target_path = (
             target_path_for(
                 parsed,
@@ -400,9 +402,7 @@ class OrganizerService:
             media_match,
             validate_candidate(candidate_to_dict(candidate)),
         )
-        media_match.reason_codes = list(
-            dict.fromkeys((*media_match.reason_codes, "MANUAL_MATCH"))
-        )
+        media_match.reason_codes = list(dict.fromkeys((*media_match.reason_codes, "MANUAL_MATCH")))
         session.add(
             AuditEvent(
                 job_id=job_id,
@@ -414,9 +414,7 @@ class OrganizerService:
         await self._refresh_job_readiness(session, job_id)
         return media_match
 
-    async def request_cancel(
-        self, job: OrganizeJob, session: AsyncSession
-    ) -> OrganizeJob:
+    async def request_cancel(self, job: OrganizeJob, session: AsyncSession) -> OrganizeJob:
         if job.status in {
             JobStatus.COMPLETED,
             JobStatus.PARTIAL_FAILED,
@@ -483,17 +481,13 @@ class OrganizerService:
         job.approved_items = approved_items
         job.failed_items = 0
         job.status = (
-            JobStatus.READY
-            if review_items + unresolved_items == 0
-            else JobStatus.REVIEW_REQUIRED
+            JobStatus.READY if review_items + unresolved_items == 0 else JobStatus.REVIEW_REQUIRED
         )
         job.current_stage = "可以执行" if job.status == JobStatus.READY else "等待审核"
         await session.commit()
 
 
-def _target_path_for_candidate(
-    media_match: MediaMatch, candidate: MatchCandidateSchema
-) -> str:
+def _target_path_for_candidate(media_match: MediaMatch, candidate: MatchCandidateSchema) -> str:
     parsed_from_filename = parse_media_filename(media_match.source_item.filename)
     quality_tags_value = media_match.release_info.get("quality_tags", [])
     quality_tags = (
@@ -502,9 +496,7 @@ def _target_path_for_candidate(
         else ()
     )
     release_group_value = media_match.release_info.get("release_group", "")
-    release_group = (
-        release_group_value if isinstance(release_group_value, str) else ""
-    )
+    release_group = release_group_value if isinstance(release_group_value, str) else ""
     parsed = ParsedMediaName(
         media_type=media_match.media_type,
         title=media_match.parsed_title,

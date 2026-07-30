@@ -52,8 +52,7 @@ def test_builds_tv_multi_episode_path() -> None:
     )
 
     assert target_path == (
-        "TV/示例剧集 (2024)/Season 02/"
-        "示例剧集 (2024) - S02E03E04 - 新世界 - [1080p].mkv"
+        "TV/示例剧集 (2024)/Season 02/示例剧集 (2024) - S02E03E04 - 新世界 - [1080p].mkv"
     )
 
 

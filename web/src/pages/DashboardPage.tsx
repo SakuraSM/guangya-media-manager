@@ -66,6 +66,9 @@ export function DashboardPage() {
           <Database size={28} aria-hidden="true" />
           <h2>当前没有运行中的任务</h2>
           <p>选择一个源目录，先预扫描并审核识别结果。</p>
+          <a className="button button-secondary" href="/jobs">
+            创建整理任务
+          </a>
         </section>
       )}
 

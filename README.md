@@ -56,6 +56,7 @@ WEB_ORIGIN=http://192.168.1.10:4173
 SESSION_SECRET=至少32位随机字符串
 TOKEN_ENCRYPTION_KEY=
 DEMO_MODE=false
+TMDB_PROXY_URL=
 TMDB_API_TOKEN=你的TMDB读取令牌
 AI_BASE_URL=https://api.openai.com/v1
 AI_API_KEY=你的AI密钥
@@ -66,7 +67,9 @@ AI_MODEL=gpt-4.1-mini
 
 TMDB 同时支持 32 位 v3 API Key 和 v4 API Read Access Token。若任务显示
 `TMDB_TIMEOUT` 或 `TMDB_CONNECTION_FAILED`，请先确认 NAS 能正确解析并访问
-`api.themoviedb.org`；必要时在 `.env` 中配置 `HTTPS_PROXY` 后重启 API 和 Worker。
+`api.themoviedb.org`。Docker 部署需要使用宿主机代理时，可在 `.env` 设置
+`TMDB_PROXY_URL=http://host.docker.internal:7890` 后重启 API 和 Worker；不要设置为
+`127.0.0.1:7890`，因为该地址在容器中指向容器自身。
 
 ## 本地开发
 

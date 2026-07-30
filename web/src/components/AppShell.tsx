@@ -3,9 +3,9 @@ import {
   Clapperboard,
   FolderKanban,
   LayoutDashboard,
+  ListChecks,
   LogOut,
   Settings,
-  Sparkles,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -17,7 +17,7 @@ const NAVIGATION_ITEMS = [
   { to: '/', label: '总览', icon: LayoutDashboard, end: true },
   { to: '/jobs', label: '整理任务', icon: FolderKanban, end: false },
   { to: '/library', label: '媒体库', icon: Clapperboard, end: false },
-  { to: '/review', label: '匹配审核', icon: Sparkles, end: false },
+  { to: '/review', label: '匹配审核', icon: ListChecks, end: false },
   { to: '/settings', label: '设置', icon: Settings, end: false },
 ] as const
 
@@ -63,7 +63,10 @@ export function AppShell({ children }: { children: ReactNode }) {
           <span className="brand-mark" aria-hidden="true">
             <Bird size={24} />
           </span>
-          <span className="brand-name">光鸭媒体管家</span>
+          <span className="brand-copy">
+            <span className="brand-name">光鸭媒体管家</span>
+            <small>MEDIA ORGANIZER</small>
+          </span>
         </div>
         <nav className="primary-nav" aria-label="主导航">
           {NAVIGATION_ITEMS.map((item) => {
@@ -109,9 +112,16 @@ export function AppShell({ children }: { children: ReactNode }) {
             <h1>{PAGE_TITLES[currentPath] ?? '光鸭媒体管家'}</h1>
           </div>
           <div className="topbar-actions">
-            <span className="live-indicator">
+            <span
+              className={`live-indicator${dashboardQuery.isError ? ' live-indicator-error' : ''}`}
+              role="status"
+            >
               <span aria-hidden="true" />
-              服务正常
+              {dashboardQuery.isError
+                ? '服务连接异常'
+                : account
+                  ? '云盘已连接'
+                  : '等待连接云盘'}
             </span>
             <div className="avatar" aria-label="当前用户：admin">
               A

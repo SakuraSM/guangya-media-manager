@@ -10,12 +10,26 @@ from sqlalchemy.orm import selectinload
 
 from app.api.dependencies import DatabaseSession, Services
 from app.database import SessionFactory
-from app.domain import JobStatus, MatchDecision, SourceAction, SourceClassification
-from app.models import AuditEvent, MediaMatch, OrganizeJob, SourceItem
+from app.domain import (
+    JobStatus,
+    MatchDecision,
+    OperationStatus,
+    OperationType,
+    SourceAction,
+    SourceClassification,
+)
+from app.models import (
+    AuditEvent,
+    FileOperation,
+    MediaMatch,
+    OrganizeJob,
+    SourceItem,
+)
 from app.schemas import (
     BatchApproveMatchesRequest,
     BatchApproveMatchesResult,
     CreateJobRequest,
+    JobPage,
     JobView,
     ManualMatchRequest,
     MatchCandidate,
@@ -43,6 +57,33 @@ async def list_jobs(session: DatabaseSession) -> list[OrganizeJob]:
     return list((await session.scalars(statement)).all())
 
 
+@router.get("/page", response_model=JobPage)
+async def list_jobs_page(
+    session: DatabaseSession,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=10, le=100),
+) -> JobPage:
+    total = await session.scalar(select(func.count(OrganizeJob.id)))
+    job_count = total or 0
+    jobs = list(
+        (
+            await session.scalars(
+                select(OrganizeJob)
+                .order_by(OrganizeJob.updated_at.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        ).all()
+    )
+    return JobPage(
+        items=[JobView.model_validate(job) for job in jobs],
+        total=job_count,
+        page=page,
+        page_size=page_size,
+        pages=(job_count + page_size - 1) // page_size,
+    )
+
+
 @router.post("", response_model=JobView, status_code=status.HTTP_201_CREATED)
 async def create_job(
     request: CreateJobRequest,
@@ -53,9 +94,7 @@ async def create_job(
 
 
 @router.get("/{job_id}", response_model=JobView)
-async def get_job(
-    job_id: str, session: DatabaseSession
-) -> OrganizeJob:
+async def get_job(job_id: str, session: DatabaseSession) -> OrganizeJob:
     return await _get_job_or_404(session, job_id)
 
 
@@ -95,11 +134,7 @@ async def list_matches(
     filters = [SourceItem.job_id == job_id]
     if decision is not None:
         filters.append(MediaMatch.decision == decision)
-    total = await session.scalar(
-        select(func.count(MediaMatch.id))
-        .join(SourceItem)
-        .where(*filters)
-    )
+    total = await session.scalar(select(func.count(MediaMatch.id)).join(SourceItem).where(*filters))
     match_count = total or 0
     statement = (
         select(MediaMatch)
@@ -118,8 +153,37 @@ async def list_matches(
         .limit(page_size)
     )
     matches = (await session.scalars(statement)).all()
+    source_item_ids = [media_match.source_item_id for media_match in matches]
+    copy_operations = (
+        (
+            await session.scalars(
+                select(FileOperation)
+                .where(
+                    FileOperation.job_id == job_id,
+                    FileOperation.source_item_id.in_(source_item_ids),
+                    FileOperation.operation_type == OperationType.COPY,
+                )
+                .order_by(FileOperation.updated_at.desc())
+            )
+        ).all()
+        if source_item_ids
+        else []
+    )
+    operations_by_source_id: dict[str, FileOperation] = {}
+    for operation in copy_operations:
+        if operation.source_item_id is not None:
+            operations_by_source_id.setdefault(
+                operation.source_item_id,
+                operation,
+            )
     return MediaMatchPage(
-        items=[_to_match_view(media_match) for media_match in matches],
+        items=[
+            _to_match_view(
+                media_match,
+                operations_by_source_id.get(media_match.source_item_id),
+            )
+            for media_match in matches
+        ],
         total=match_count,
         page=page,
         page_size=page_size,
@@ -157,11 +221,10 @@ async def update_source_item(
     )
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="扫描项不存在")
-    if (
-        request.action == SourceAction.INCLUDE
-        and item.classification
-        not in {SourceClassification.EXTRA, SourceClassification.UNKNOWN}
-    ):
+    if request.action == SourceAction.INCLUDE and item.classification not in {
+        SourceClassification.EXTRA,
+        SourceClassification.UNKNOWN,
+    }:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="该类型不能人工恢复",
@@ -169,9 +232,11 @@ async def update_source_item(
     item.user_action = request.action
     job = await _get_job_or_404(session, job_id)
     include_paths_value = job.config.get("include_paths", [])
-    include_paths = {
-        path for path in include_paths_value if isinstance(path, str)
-    } if isinstance(include_paths_value, list) else set()
+    include_paths = (
+        {path for path in include_paths_value if isinstance(path, str)}
+        if isinstance(include_paths_value, list)
+        else set()
+    )
     if request.action == SourceAction.INCLUDE:
         include_paths.add(item.relative_path)
     else:
@@ -213,6 +278,7 @@ async def update_media_group(
         )
     except OrganizerError as error:
         raise _organizer_http_error(error) from error
+    await _enqueue_auto_execute_if_ready(job_id, session, services)
     return MediaGroupUpdateResult(
         group_key=group_key,
         updated_items=updated_items,
@@ -237,6 +303,7 @@ async def batch_approve_matches(
         )
     except OrganizerError as error:
         raise _organizer_http_error(error) from error
+    await _enqueue_auto_execute_if_ready(job_id, session, services)
     return BatchApproveMatchesResult(updated_items=updated_items)
 
 
@@ -257,6 +324,7 @@ async def update_match(
         )
     except OrganizerError as error:
         raise _organizer_http_error(error) from error
+    await _enqueue_auto_execute_if_ready(job_id, session, services)
     return await _load_match_view(session, media_match.id)
 
 
@@ -278,6 +346,7 @@ async def retry_match(
         )
     except OrganizerError as error:
         raise _organizer_http_error(error) from error
+    await _enqueue_auto_execute_if_ready(job_id, session, services)
     return await _load_match_view(session, media_match.id)
 
 
@@ -301,12 +370,11 @@ async def assign_manual_match(
         )
     except OrganizerError as error:
         raise _organizer_http_error(error) from error
+    await _enqueue_auto_execute_if_ready(job_id, session, services)
     return await _load_match_view(session, media_match.id)
 
 
-async def _load_match_view(
-    session: AsyncSession, match_id: str
-) -> MediaMatchView:
+async def _load_match_view(session: AsyncSession, match_id: str) -> MediaMatchView:
     statement = (
         select(MediaMatch)
         .options(
@@ -321,20 +389,36 @@ async def _load_match_view(
     return _to_match_view(refreshed_match)
 
 
-@router.post(
-    "/{job_id}/execute", response_model=JobView, status_code=status.HTTP_202_ACCEPTED
-)
+@router.post("/{job_id}/execute", response_model=JobView, status_code=status.HTTP_202_ACCEPTED)
 async def execute_job(
     job_id: str,
     session: DatabaseSession,
     services: Services,
 ) -> OrganizeJob:
     job = await _get_job_or_404(session, job_id)
-    if job.status != JobStatus.READY:
+    if job.status not in {JobStatus.READY, JobStatus.PARTIAL_FAILED}:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="仍有未审核或未识别文件",
+            detail="任务尚未完成审核，或当前状态不能整批执行",
         )
+    if job.config.get("_auto_execute_queued", False):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="自动整理已经加入执行队列",
+        )
+    if job.status == JobStatus.PARTIAL_FAILED:
+        retryable_copy_id = await session.scalar(
+            select(FileOperation.id).where(
+                FileOperation.job_id == job.id,
+                FileOperation.operation_type == OperationType.COPY,
+                FileOperation.status.in_([OperationStatus.FAILED, OperationStatus.RUNNING]),
+            )
+        )
+        if retryable_copy_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="该任务没有可重试的复制文件",
+            )
     job.is_cancel_requested = False
     await session.commit()
     await services.queue.enqueue("execute", job_id)
@@ -370,7 +454,43 @@ async def _get_job_or_404(session: AsyncSession, job_id: str) -> OrganizeJob:
     return job
 
 
-def _to_match_view(media_match: MediaMatch) -> MediaMatchView:
+async def _enqueue_auto_execute_if_ready(
+    job_id: str,
+    session: AsyncSession,
+    services: Services,
+) -> None:
+    job = await _get_job_or_404(session, job_id)
+    if (
+        job.status != JobStatus.READY
+        or not job.config.get("auto_execute_after_approval", False)
+        or job.config.get("_auto_execute_queued", False)
+    ):
+        return
+    job.config = {**job.config, "_auto_execute_queued": True}
+    job.current_stage = "审批完成，等待自动整理"
+    session.add(
+        AuditEvent(
+            job_id=job.id,
+            event_type="AUTO_EXECUTE_QUEUED",
+            message="全部审批完成，已加入自动整理队列",
+        )
+    )
+    await session.commit()
+    try:
+        await services.queue.enqueue("execute", job.id)
+    except Exception:
+        job.config = {
+            key: value for key, value in job.config.items() if key != "_auto_execute_queued"
+        }
+        job.current_stage = "自动整理入队失败，可手动执行"
+        await session.commit()
+        raise
+
+
+def _to_match_view(
+    media_match: MediaMatch,
+    execution_operation: FileOperation | None = None,
+) -> MediaMatchView:
     return MediaMatchView(
         id=media_match.id,
         source_item_id=media_match.source_item_id,
@@ -385,9 +505,7 @@ def _to_match_view(media_match: MediaMatch) -> MediaMatchView:
         edition=media_match.edition,
         confidence=media_match.confidence,
         decision=media_match.decision,
-        selected_tmdb_id=(
-            media_match.media_entity.tmdb_id if media_match.media_entity else None
-        ),
+        selected_tmdb_id=(media_match.media_entity.tmdb_id if media_match.media_entity else None),
         candidates=[
             MatchCandidate.model_validate(candidate) for candidate in media_match.candidates
         ],
@@ -397,6 +515,8 @@ def _to_match_view(media_match: MediaMatch) -> MediaMatchView:
         episode_title=media_match.episode_title,
         episode_date=media_match.episode_date,
         release_info=media_match.release_info,
+        execution_status=(execution_operation.status if execution_operation else None),
+        execution_error=(execution_operation.error_message if execution_operation else None),
     )
 
 

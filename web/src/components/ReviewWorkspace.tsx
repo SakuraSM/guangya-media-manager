@@ -49,7 +49,7 @@ export function ReviewWorkspace({
   onPageSizeChange,
 }: ReviewWorkspaceProps) {
   return (
-    <>
+    <section className="review-workbench" aria-label="匹配审核工作台">
       <div className="review-workspace">
         <SourceMatchBrowser
           groups={matchGroups}
@@ -88,6 +88,6 @@ export function ReviewWorkspace({
         onPageChange={onPageChange}
         onPageSizeChange={onPageSizeChange}
       />
-    </>
+    </section>
   )
 }

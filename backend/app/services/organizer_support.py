@@ -157,9 +157,7 @@ def decide_match(
     return MatchDecision.UNRESOLVED, score
 
 
-def find_candidate(
-    candidates: list[dict[str, object]], tmdb_id: int
-) -> dict[str, object] | None:
+def find_candidate(candidates: list[dict[str, object]], tmdb_id: int) -> dict[str, object] | None:
     for candidate in candidates:
         try:
             candidate_schema = validate_candidate(candidate)

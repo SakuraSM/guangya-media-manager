@@ -15,6 +15,7 @@ interface PaginationControlsProps {
   isLoading: boolean
   onPageChange: (page: number) => void
   onPageSizeChange: (pageSize: number) => void
+  ariaLabel?: string
 }
 
 export function PaginationControls({
@@ -25,6 +26,7 @@ export function PaginationControls({
   isLoading,
   onPageChange,
   onPageSizeChange,
+  ariaLabel = '匹配结果分页',
 }: PaginationControlsProps) {
   const displayPages = Math.max(pages, 1)
   const handlePageSizeChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
@@ -32,7 +34,7 @@ export function PaginationControls({
   }
 
   return (
-    <nav className="pagination-controls" aria-label="匹配结果分页">
+    <nav className="pagination-controls" aria-label={ariaLabel}>
       <span>
         共 {total} 条 · 第 {page}/{displayPages} 页
       </span>

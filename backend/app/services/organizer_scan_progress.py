@@ -69,11 +69,7 @@ class IncrementalMatchStore:
             group_key=group_key,
             is_ignored=parsed.is_ignored,
         )
-        decision = (
-            MatchDecision.IGNORED
-            if parsed.is_ignored
-            else MatchDecision.UNRESOLVED
-        )
+        decision = MatchDecision.IGNORED if parsed.is_ignored else MatchDecision.UNRESOLVED
         reason_codes = list(parsed.reason_codes)
         if not parsed.is_ignored:
             reason_codes.append(METADATA_PENDING_REASON)
@@ -112,30 +108,17 @@ class IncrementalMatchStore:
         total_items: int,
     ) -> None:
         progress_ratio = parsed_items / total_items if total_items else 1
-        progress_span = (
-            RULE_PARSE_COMPLETE_PROGRESS - RULE_PARSE_START_PROGRESS
-        )
-        self._job.progress = (
-            RULE_PARSE_START_PROGRESS + progress_span * progress_ratio
-        )
-        self._job.current_stage = (
-            f"规则解析 {parsed_items}/{total_items}"
-        )
+        progress_span = RULE_PARSE_COMPLETE_PROGRESS - RULE_PARSE_START_PROGRESS
+        self._job.progress = RULE_PARSE_START_PROGRESS + progress_span * progress_ratio
+        self._job.current_stage = f"规则解析 {parsed_items}/{total_items}"
 
 
 def _should_commit_rule_batch(item_number: int, total_items: int) -> bool:
-    return (
-        item_number % RULE_PARSE_COMMIT_BATCH_SIZE == 0
-        or item_number == total_items
-    )
+    return item_number % RULE_PARSE_COMMIT_BATCH_SIZE == 0 or item_number == total_items
 
 
 def _rule_group_key(parsed: ParsedMediaName, parent_path: str) -> str:
-    title = (
-        parsed.context_group
-        or parsed.title
-        or PurePosixPath(parent_path).name
-    )
+    title = parsed.context_group or parsed.title or PurePosixPath(parent_path).name
     return "|".join(
         (
             parsed.media_type.value,

@@ -33,6 +33,8 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://media_manager:media_manager@postgres:5432/media_manager
       REDIS_URL: redis://redis:6379/0
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${BIND_HOST:-127.0.0.1}:8000:8000"
     healthcheck:
@@ -61,6 +63,8 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://media_manager:media_manager@postgres:5432/media_manager
       REDIS_URL: redis://redis:6379/0
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy

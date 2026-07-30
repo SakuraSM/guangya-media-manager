@@ -86,6 +86,14 @@ class OrganizeJob(Base, TimestampMixin):
         back_populates="job", cascade="all, delete-orphan"
     )
 
+    @property
+    def auto_approve_enabled(self) -> bool:
+        return bool(self.config.get("auto_approve_enabled", True))
+
+    @property
+    def auto_execute_after_approval(self) -> bool:
+        return bool(self.config.get("auto_execute_after_approval", False))
+
 
 class SourceItem(Base, TimestampMixin):
     __tablename__ = "source_items"
@@ -104,9 +112,7 @@ class SourceItem(Base, TimestampMixin):
         String(32), default=SourceClassification.UNKNOWN
     )
     filter_reason: Mapped[str] = mapped_column(String(64), default="")
-    user_action: Mapped[SourceAction] = mapped_column(
-        String(16), default=SourceAction.DEFAULT
-    )
+    user_action: Mapped[SourceAction] = mapped_column(String(16), default=SourceAction.DEFAULT)
     group_key: Mapped[str] = mapped_column(String(512), default="")
     associated_media_item_id: Mapped[str | None] = mapped_column(
         ForeignKey("source_items.id", ondelete="CASCADE"), nullable=True
@@ -137,9 +143,7 @@ class MediaEntity(Base, TimestampMixin):
 
 class MediaSeason(Base, TimestampMixin):
     __tablename__ = "media_seasons"
-    __table_args__ = (
-        UniqueConstraint("media_entity_id", "season_number", name="uq_media_season"),
-    )
+    __table_args__ = (UniqueConstraint("media_entity_id", "season_number", name="uq_media_season"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     media_entity_id: Mapped[str] = mapped_column(
@@ -161,9 +165,7 @@ class MediaEpisode(Base, TimestampMixin):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    media_season_id: Mapped[str] = mapped_column(
-        ForeignKey("media_seasons.id", ondelete="CASCADE")
-    )
+    media_season_id: Mapped[str] = mapped_column(ForeignKey("media_seasons.id", ondelete="CASCADE"))
     tmdb_id: Mapped[int | None] = mapped_column(nullable=True)
     episode_number: Mapped[int] = mapped_column()
     name: Mapped[str] = mapped_column(String(256), default="")
@@ -192,9 +194,7 @@ class MediaMatch(Base, TimestampMixin):
     episode_numbers: Mapped[list[int]] = mapped_column(JSON, default=list)
     edition: Mapped[str] = mapped_column(String(128), default="")
     confidence: Mapped[float] = mapped_column(Float, default=0)
-    decision: Mapped[MatchDecision] = mapped_column(
-        String(32), default=MatchDecision.UNRESOLVED
-    )
+    decision: Mapped[MatchDecision] = mapped_column(String(32), default=MatchDecision.UNRESOLVED)
     candidates: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list)
     target_path: Mapped[str] = mapped_column(String(1024), default="")
     reason_codes: Mapped[list[str]] = mapped_column(JSON, default=list)
@@ -228,9 +228,7 @@ class FileOperation(Base, TimestampMixin):
         ForeignKey("source_items.id", ondelete="SET NULL"), nullable=True
     )
     operation_type: Mapped[OperationType] = mapped_column(String(24))
-    status: Mapped[OperationStatus] = mapped_column(
-        String(24), default=OperationStatus.PENDING
-    )
+    status: Mapped[OperationStatus] = mapped_column(String(24), default=OperationStatus.PENDING)
     source_path: Mapped[str] = mapped_column(String(1024), default="")
     target_path: Mapped[str] = mapped_column(String(1024), default="")
     idempotency_key: Mapped[str] = mapped_column(String(160), unique=True)

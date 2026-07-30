@@ -15,9 +15,7 @@ async def test_demo_provider_copy_resolve_rename_and_move() -> None:
     await provider.rename_item(copied.id, "星际穿越 (2014).mkv")
     move_task = await provider.move_items([copied.id], destination.id)
     assert await provider.task_is_complete(move_task.task_id)
-    destination_nodes = await provider.list_directory(
-        destination.id, destination.path
-    )
+    destination_nodes = await provider.list_directory(destination.id, destination.path)
 
     assert [node.name for node in destination_nodes] == ["星际穿越 (2014).mkv"]
     assert destination_nodes[0].fingerprint == "demo-interstellar"

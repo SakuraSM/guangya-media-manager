@@ -48,9 +48,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     login_manager = LoginManager(provider, token_cipher)
     async with SessionFactory() as database_session:
         await login_manager.restore_session(database_session)
-        runtime_settings = await load_runtime_settings(
-            database_session, token_cipher, app_settings
-        )
+        runtime_settings = await load_runtime_settings(database_session, token_cipher, app_settings)
         apply_runtime_settings(runtime_settings, tmdb_service, ai_service)
     application.state.services = AppServices(
         provider=provider,

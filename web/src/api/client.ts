@@ -8,6 +8,7 @@ import type {
   CreateJobInput,
   Dashboard,
   Job,
+  JobPage,
   LibraryItem,
   ManualMatchInput,
   MatchDecision,
@@ -107,6 +108,13 @@ export const api = {
   logout: () => requestJson<SessionState>('/session/logout', { method: 'POST' }),
   getDashboard: () => requestJson<Dashboard>('/dashboard'),
   getJobs: () => requestJson<Job[]>('/jobs'),
+  getJobsPage: (page: number, pageSize: number) => {
+    const query = new URLSearchParams({
+      page: String(page),
+      page_size: String(pageSize),
+    })
+    return requestJson<JobPage>(`/jobs/page?${query.toString()}`)
+  },
   getJob: (jobId: string) => requestJson<Job>(`/jobs/${jobId}`),
   createJob: (input: CreateJobInput) =>
     requestJson<Job>('/jobs', { method: 'POST', body: JSON.stringify(input) }),

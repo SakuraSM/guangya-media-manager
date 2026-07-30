@@ -36,9 +36,7 @@ async def test_group_update_validates_all_candidates_before_mutating(
 
     monkeypatch.setattr("app.services.organizer.load_job", load_test_job)
     session = MagicMock()
-    session.scalars = AsyncMock(
-        return_value=ScalarResult([first_match, second_match])
-    )
+    session.scalars = AsyncMock(return_value=ScalarResult([first_match, second_match]))
     session.commit = AsyncMock()
     service = object.__new__(OrganizerService)
 

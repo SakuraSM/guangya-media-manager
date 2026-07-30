@@ -126,6 +126,7 @@ class TmdbService:
     def __init__(self, settings: Settings) -> None:
         self._token = settings.tmdb_api_token.strip()
         self._is_demo_mode = settings.demo_mode
+        self._proxy_url = settings.tmdb_proxy_url.strip() or None
 
     def configure(self, token: str) -> None:
         self._token = token.strip()
@@ -154,9 +155,7 @@ class TmdbService:
             and (candidate := _to_metadata_candidate(item, parsed)) is not None
         ]
 
-    async def get_tv_season(
-        self, series_id: int, season_number: int
-    ) -> SeasonMetadata | None:
+    async def get_tv_season(self, series_id: int, season_number: int) -> SeasonMetadata | None:
         if not self._token:
             return None
         payload = await self._get_json(
@@ -171,8 +170,7 @@ class TmdbService:
         episodes = tuple(
             episode
             for item in episodes_value
-            if isinstance(item, dict)
-            and (episode := _to_episode_metadata(item)) is not None
+            if isinstance(item, dict) and (episode := _to_episode_metadata(item)) is not None
         )
         return SeasonMetadata(
             season_number=_int_value(payload.get("season_number"), season_number),
@@ -197,9 +195,7 @@ class TmdbService:
             f"{endpoint_type}/{tmdb_id}",
             {
                 "language": language,
-                "append_to_response": (
-                    "credits,external_ids,release_dates,content_ratings"
-                ),
+                "append_to_response": ("credits,external_ids,release_dates,content_ratings"),
             },
         )
 
@@ -218,7 +214,10 @@ class TmdbService:
         else:
             headers["Authorization"] = f"Bearer {self._token}"
         last_error: httpx.HTTPError | None = None
-        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout_seconds,
+            proxy=self._proxy_url,
+        ) as client:
             for attempt in range(max_attempts):
                 try:
                     response = await client.get(
@@ -335,9 +334,7 @@ class MetadataResolver:
         self._tmdb_semaphore = asyncio.Semaphore(TMDB_SEARCH_CONCURRENCY)
         self._ai_semaphore = asyncio.Semaphore(AI_RECOGNITION_CONCURRENCY)
 
-    async def resolve(
-        self, request: MetadataResolutionRequest
-    ) -> MetadataResolution:
+    async def resolve(self, request: MetadataResolutionRequest) -> MetadataResolution:
         parsed, primary_candidates = await self._search_tmdb(
             request.parsed,
             success_reason="TMDB_PRIMARY_MATCH",
@@ -393,18 +390,14 @@ class MetadataResolver:
                 candidates = tuple(await self._tmdb_service.search(parsed))
             except MetadataServiceError as error:
                 resolved_reason = (
-                    error.reason_code
-                    if error.reason_code.startswith("TMDB_")
-                    else failure_reason
+                    error.reason_code if error.reason_code.startswith("TMDB_") else failure_reason
                 )
                 return _append_reason_codes(parsed, resolved_reason), ()
         reason = success_reason if candidates else empty_reason
         return _append_reason_codes(parsed, reason), candidates
 
 
-def _merge_ai_recognition(
-    parsed: ParsedMediaName, recognition: AiRecognition
-) -> ParsedMediaName:
+def _merge_ai_recognition(parsed: ParsedMediaName, recognition: AiRecognition) -> ParsedMediaName:
     return replace(
         parsed,
         media_type=recognition.media_type,
@@ -418,14 +411,10 @@ def _merge_ai_recognition(
     )
 
 
-def _append_reason_codes(
-    parsed: ParsedMediaName, *reason_codes: str
-) -> ParsedMediaName:
+def _append_reason_codes(parsed: ParsedMediaName, *reason_codes: str) -> ParsedMediaName:
     return replace(
         parsed,
-        reason_codes=tuple(
-            dict.fromkeys((*parsed.reason_codes, *reason_codes))
-        ),
+        reason_codes=tuple(dict.fromkeys((*parsed.reason_codes, *reason_codes))),
     )
 
 
@@ -443,9 +432,7 @@ def _ai_failure_reason(error: BaseException) -> str:
 
 
 def _is_tmdb_v3_api_key(token: str) -> bool:
-    return len(token) == 32 and all(
-        character in "0123456789abcdefABCDEF" for character in token
-    )
+    return len(token) == 32 and all(character in "0123456789abcdefABCDEF" for character in token)
 
 
 def _tmdb_request_error(
@@ -463,11 +450,7 @@ def _tmdb_request_error(
         )
     if isinstance(error, httpx.HTTPStatusError):
         status_code = error.response.status_code
-        reason_code = (
-            "TMDB_RATE_LIMITED"
-            if status_code == 429
-            else "TMDB_HTTP_FAILED"
-        )
+        reason_code = "TMDB_RATE_LIMITED" if status_code == 429 else "TMDB_HTTP_FAILED"
         return MetadataServiceError(
             "TMDB HTTP request failed",
             reason_code=reason_code,

@@ -71,16 +71,12 @@ class DemoGuangyaProvider:
         await asyncio.sleep(0.05)
         return True
 
-    async def resolve_task_nodes(
-        self, task_id: str, parent_path: str
-    ) -> list[CloudNode]:
+    async def resolve_task_nodes(self, task_id: str, parent_path: str) -> list[CloudNode]:
         output_ids = self._task_outputs.get(task_id, [])
         return [self._find_node(node_id) for node_id in output_ids]
 
     async def create_directory(self, name: str, parent_id: str) -> CloudNode:
-        parent_path = (
-            self._find_node(parent_id).path if parent_id else "/光鸭云盘"
-        )
+        parent_path = self._find_node(parent_id).path if parent_id else "/光鸭云盘"
         node = CloudNode(
             id=str(uuid4()),
             parent_id=parent_id,
@@ -137,9 +133,7 @@ class DemoGuangyaProvider:
         return node
 
     def _replace_node(self, replacement: CloudNode) -> None:
-        self._nodes = [
-            replacement if node.id == replacement.id else node for node in self._nodes
-        ]
+        self._nodes = [replacement if node.id == replacement.id else node for node in self._nodes]
 
 
 def _build_demo_nodes() -> list[CloudNode]:
@@ -152,7 +146,7 @@ def _build_demo_nodes() -> list[CloudNode]:
         CloudNode(
             "interstellar",
             "movies",
-            "Interstellar.2014.2160p.BluRay.REMUX.HEVC.DTS-HD.MA.7.1.mkv",
+            "Interstellar.2014.2160p.BluRay.REMUX.HEVC.mkv",
             "/光鸭云盘/未整理/电影/Interstellar.2014.2160p.BluRay.REMUX.HEVC.mkv",
             False,
             67 * gibibyte,

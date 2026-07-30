@@ -116,7 +116,14 @@ export function ReviewPage() {
   })
   const executeMutation = useMutation({
     mutationFn: () => api.executeJob(selectedJobId),
-    onSuccess: refreshReviewData,
+    onSuccess: async (job) => {
+      setActionMessage(
+        job.status === JOB_STATUS.PARTIAL_FAILED
+          ? '已提交整批重试，将自动跳过已完成文件。'
+          : '审核计划已冻结，整批复制任务已提交。',
+      )
+      await refreshReviewData()
+    },
   })
   const cancelMutation = useMutation({
     mutationFn: () => api.cancelJob(selectedJobId),

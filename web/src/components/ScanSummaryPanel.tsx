@@ -1,6 +1,13 @@
 import { useMemo } from 'react'
 import type { ReactNode } from 'react'
-import { CircleSlash, FileSearch, Film, Languages, RotateCcw } from 'lucide-react'
+import {
+  ChevronDown,
+  CircleSlash,
+  FileSearch,
+  Film,
+  Languages,
+  RotateCcw,
+} from 'lucide-react'
 import {
   type SourceAction,
   type SourceClassification,
@@ -35,14 +42,21 @@ export function ScanSummaryPanel({
   )
 
   return (
-    <section className="scan-summary-panel" aria-labelledby="scan-summary-title">
-      <div className="section-heading">
+    <details className="scan-summary-panel">
+      <summary className="scan-summary-heading">
         <div>
-          <h2 id="scan-summary-title">预扫描分类</h2>
-          <p>所有文件均保留分类和过滤原因，源目录不会被修改。</p>
+          <h2>扫描分类与过滤</h2>
+          <p>
+            媒体 {counts.MEDIA} · 字幕 {counts.SUBTITLE} · 附加内容 {counts.EXTRA} ·
+            已过滤/素材 {counts.IGNORED + counts.EXISTING_ASSET}
+          </p>
         </div>
-        <FileSearch size={20} aria-hidden="true" />
-      </div>
+        <span>
+          <FileSearch size={18} aria-hidden="true" />
+          查看扫描项
+          <ChevronDown className="scan-summary-chevron" size={16} aria-hidden="true" />
+        </span>
+      </summary>
       <dl className="scan-summary-grid">
         <SummaryMetric
           icon={<Film size={17} aria-hidden="true" />}
@@ -96,7 +110,7 @@ export function ScanSummaryPanel({
           </ul>
         </div>
       ) : null}
-    </section>
+    </details>
   )
 }
 

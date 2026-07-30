@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { ScanSearch, ShieldCheck } from 'lucide-react'
+import { Bot, ScanSearch, ShieldCheck, Workflow, X } from 'lucide-react'
 import { api } from '../api/client'
 import type { CloudDirectory, CreateJobInput } from '../types'
 import { DirectoryPicker } from './DirectoryPicker'
@@ -20,6 +20,8 @@ const DEFAULT_CONFIG: CreateJobInput['config'] = {
   rename_subtitles: true,
   auto_approve_threshold: 0.9,
   review_threshold: 0.65,
+  auto_approve_enabled: true,
+  auto_execute_after_approval: false,
   naming_profile: 'UNIVERSAL_ENHANCED',
   extras_policy: 'EXCLUDE_REVIEWABLE',
   sample_max_mb: 300,
@@ -29,9 +31,10 @@ const DEFAULT_CONFIG: CreateJobInput['config'] = {
 
 interface NewJobPanelProps {
   onCreated: () => void
+  onCancel: () => void
 }
 
-export function NewJobPanel({ onCreated }: NewJobPanelProps) {
+export function NewJobPanel({ onCreated, onCancel }: NewJobPanelProps) {
   const queryClient = useQueryClient()
   const [sourceDirectory, setSourceDirectory] = useState<CloudDirectory | null>(null)
   const [targetDirectory, setTargetDirectory] = useState<CloudDirectory | null>(null)
@@ -54,7 +57,7 @@ export function NewJobPanel({ onCreated }: NewJobPanelProps) {
     event.preventDefault()
     if (!sourceDirectory || !targetDirectory) return
     createMutation.mutate({
-      name: `${sourceDirectory.name} · AI 整理`,
+      name: `${sourceDirectory.name} · 媒体整理`,
       source_directory_id: sourceDirectory.id,
       source_directory_path: sourceDirectory.path,
       target_directory_id: targetDirectory.id,
@@ -71,6 +74,20 @@ export function NewJobPanel({ onCreated }: NewJobPanelProps) {
 
   return (
     <form className="new-job-panel" onSubmit={handleSubmit}>
+      <div className="new-job-title">
+        <div>
+          <h2>新建整理任务</h2>
+          <p>选择源目录和目标目录，扫描后按审核策略继续执行。</p>
+        </div>
+        <button
+          className="icon-button"
+          type="button"
+          onClick={onCancel}
+          aria-label="关闭创建面板"
+        >
+          <X size={18} aria-hidden="true" />
+        </button>
+      </div>
       <div className="stepper" aria-label="任务创建步骤">
         {['选择目录', '识别规则', '预扫描', '审核执行'].map((step, index) => (
           <div className={index === 0 ? 'step step-active' : 'step'} key={step}>
@@ -153,6 +170,51 @@ export function NewJobPanel({ onCreated }: NewJobPanelProps) {
           }))
         }
       />
+      <fieldset className="automation-options">
+        <legend>自动化流程</legend>
+        <label className="automation-option">
+          <span className="automation-option-icon">
+            <Bot size={18} aria-hidden="true" />
+          </span>
+          <span>
+            <strong>自动审批</strong>
+            <small>
+              TMDB 置信度达到阈值时自动通过；AI 识别结果仍需人工确认。
+            </small>
+          </span>
+          <input
+            type="checkbox"
+            checked={config.auto_approve_enabled}
+            onChange={(event) =>
+              setConfig((currentConfig) => ({
+                ...currentConfig,
+                auto_approve_enabled: event.target.checked,
+              }))
+            }
+          />
+        </label>
+        <label className="automation-option">
+          <span className="automation-option-icon">
+            <Workflow size={18} aria-hidden="true" />
+          </span>
+          <span>
+            <strong>审批完成后自动整理</strong>
+            <small>
+              所有记录审批完成后，自动进入整批复制、刮削和发布流程。
+            </small>
+          </span>
+          <input
+            type="checkbox"
+            checked={config.auto_execute_after_approval}
+            onChange={(event) =>
+              setConfig((currentConfig) => ({
+                ...currentConfig,
+                auto_execute_after_approval: event.target.checked,
+              }))
+            }
+          />
+        </label>
+      </fieldset>
       <div className="safe-operation-note">
         <ShieldCheck size={19} aria-hidden="true" />
         <div>
@@ -168,7 +230,11 @@ export function NewJobPanel({ onCreated }: NewJobPanelProps) {
           disabled={!sourceDirectory || !targetDirectory || createMutation.isPending}
         >
           <ScanSearch size={17} aria-hidden="true" />
-          {createMutation.isPending ? '正在创建并扫描…' : '创建并开始预扫描'}
+          {createMutation.isPending
+            ? '正在创建并扫描…'
+            : config.auto_execute_after_approval
+              ? '创建并启动自动流程'
+              : '创建并开始预扫描'}
         </button>
       </div>
     </form>

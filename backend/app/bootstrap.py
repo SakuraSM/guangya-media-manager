@@ -24,9 +24,7 @@ async def build_organizer_service(
     tmdb_service = TmdbService(settings)
     ai_service = AiRecognitionService(settings)
     async with SessionFactory() as session:
-        runtime_settings = await load_runtime_settings(
-            session, TokenCipher(settings), settings
-        )
+        runtime_settings = await load_runtime_settings(session, TokenCipher(settings), settings)
         apply_runtime_settings(runtime_settings, tmdb_service, ai_service)
     return OrganizerService(
         session_factory=SessionFactory,

@@ -78,27 +78,19 @@ def _release_suffix(parsed: ParsedMediaName) -> str:
     release_tags = parsed.quality_tags or ((parsed.edition,) if parsed.edition else ())
     for tag in release_tags:
         sanitized = sanitize_path_segment(tag)
-        if sanitized and sanitized.casefold() not in {
-            existing.casefold() for existing in tags
-        }:
+        if sanitized and sanitized.casefold() not in {existing.casefold() for existing in tags}:
             tags.append(sanitized)
     if not tags and not parsed.release_group:
         return ""
     version_label = f" - [{' '.join(tags)}]" if tags else ""
     release_group = (
-        f"-{sanitize_path_segment(parsed.release_group)}"
-        if parsed.release_group
-        else ""
+        f"-{sanitize_path_segment(parsed.release_group)}" if parsed.release_group else ""
     )
     return f"{version_label}{release_group}"
 
 
 def _subtitle_suffix_tokens(stem: str) -> tuple[str, ...]:
-    normalized_tokens = [
-        token.casefold()
-        for token in re.split(r"[._ ]+", stem)
-        if token
-    ]
+    normalized_tokens = [token.casefold() for token in re.split(r"[._ ]+", stem) if token]
     result: list[str] = []
     for token in normalized_tokens:
         if token in SUBTITLE_LANGUAGE_TOKENS | SUBTITLE_FLAG_TOKENS and token not in result:

@@ -58,9 +58,7 @@ class ClassificationResult:
     is_reviewable: bool = False
 
 
-def classify_source_node(
-    node: CloudNode, policy: ClassificationPolicy
-) -> ClassificationResult:
+def classify_source_node(node: CloudNode, policy: ClassificationPolicy) -> ClassificationResult:
     relative_path = _relative_path(node.path, policy.source_root)
     path = PurePosixPath(node.path)
     lowered_name = node.name.casefold()
