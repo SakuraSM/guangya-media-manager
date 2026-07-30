@@ -220,13 +220,43 @@ export interface AuditEvent {
 
 export interface LibraryItem {
   id: string
+  tmdb_id: number
   title: string
   year: number | null
   media_type: MediaType
   poster_url: string | null
   target_path: string
-  source_filename: string
   completed_at: string
+  file_count: number
+  season_count: number
+  episode_count: number
+}
+
+export interface LibraryEpisode {
+  id: string
+  episode_number: number
+  title: string
+  overview: string
+  air_date: string | null
+  still_url: string | null
+  source_filename: string
+  target_path: string
+}
+
+export interface LibrarySeason {
+  id: string
+  season_number: number
+  name: string
+  overview: string
+  poster_url: string | null
+  episode_count: number
+  episodes: LibraryEpisode[]
+}
+
+export interface LibraryItemDetail extends LibraryItem {
+  overview: string
+  backdrop_url: string | null
+  seasons: LibrarySeason[]
 }
 
 export interface AppSettings {
