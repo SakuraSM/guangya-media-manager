@@ -70,6 +70,10 @@ def fingerprint(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()[:12]
 
 
+def public_revisions() -> list[str]:
+    return git("rev-list", "--branches", "--tags", "--remotes=origin").decode().splitlines()
+
+
 def is_placeholder(value: bytes) -> bool:
     normalized = value.strip().strip(b"'\"").lower()
     return not normalized or any(marker in normalized for marker in PLACEHOLDER_MARKERS)
@@ -77,7 +81,7 @@ def is_placeholder(value: bytes) -> bool:
 
 def paths_by_blob() -> dict[str, set[str]]:
     result: dict[str, set[str]] = defaultdict(set)
-    for revision in git("rev-list", "--all").decode().splitlines():
+    for revision in public_revisions():
         tree = git("ls-tree", "-r", "--full-tree", revision).decode("utf-8", "replace")
         for entry in tree.splitlines():
             metadata, path = entry.split("\t", 1)
@@ -107,7 +111,13 @@ def scan_blob(path: str, content: bytes) -> list[tuple[str, bytes]]:
 
 def scan_commit_emails() -> list[str]:
     findings: list[str] = []
-    rows = git("log", "--all", "--format=%H%x09%ae%x09%ce").decode().splitlines()
+    rows = git(
+        "log",
+        "--format=%H%x09%ae%x09%ce",
+        "--branches",
+        "--tags",
+        "--remotes=origin",
+    ).decode().splitlines()
     for row in rows:
         revision, author_email, committer_email = row.split("\t")
         for role, email in (("author", author_email), ("committer", committer_email)):
