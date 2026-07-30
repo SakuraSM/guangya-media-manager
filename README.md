@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./docs/assets/logo.png" width="112" alt="光鸭媒体管家 Logo">
+  <img src="./web/public/logo.png" width="112" alt="光鸭媒体管家 Logo">
 </p>
 
 <h1 align="center">光鸭媒体管家</h1>

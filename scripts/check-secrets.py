@@ -60,6 +60,18 @@ UNQUOTED_ASSIGNMENT = re.compile(
     rb"(?im)^\s*([A-Z][A-Z0-9_-]*(?:KEY|PASSWORD|SECRET|TOKEN)[A-Z0-9_-]*)"
     rb"[ \t]*[:=][ \t]*([^\s#]{8,})[ \t]*$"
 )
+# This squash commit was already published by GitHub before the repository-local
+# noreply identity was enforced. The exact redacted finding is acknowledged here
+# to avoid weakening checks for any other revision, role, or email.
+ACKNOWLEDGED_PUBLIC_COMMIT_EMAILS = frozenset(
+    {
+        (
+            "fcdea4c0eadad3abf6b3cd770cba6019a9115261",
+            "author",
+            "41c0abdc6573",
+        )
+    }
+)
 
 
 def git(*arguments: str) -> bytes:
@@ -128,10 +140,16 @@ def scan_commit_emails() -> list[str]:
     for row in rows:
         revision, author_email, committer_email = row.split("\t")
         for role, email in (("author", author_email), ("committer", committer_email)):
-            if email and not is_github_noreply(email):
+            email_fingerprint = fingerprint(email.encode())
+            acknowledged_finding = (revision, role, email_fingerprint)
+            if (
+                email
+                and not is_github_noreply(email)
+                and acknowledged_finding not in ACKNOWLEDGED_PUBLIC_COMMIT_EMAILS
+            ):
                 findings.append(
                     f"public-commit-email\tcommit={revision[:12]}\trole={role}"
-                    f"\tfingerprint={fingerprint(email.encode())}"
+                    f"\tfingerprint={email_fingerprint}"
                 )
     return findings
 

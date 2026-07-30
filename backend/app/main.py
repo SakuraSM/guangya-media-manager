@@ -68,7 +68,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 app_settings = get_settings()
 app = FastAPI(
     title="光鸭媒体管家 API",
-    version="0.1.2",
+    version="0.1.3",
     lifespan=lifespan,
 )
 app.add_middleware(
