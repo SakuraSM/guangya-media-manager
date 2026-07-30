@@ -1,60 +1,66 @@
 import { useMemo, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CheckCircle2, CircleSlash, Play, Search, TriangleAlert } from 'lucide-react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { ErrorNotice } from '../components/ErrorNotice'
-import { GroupedMatchTable } from '../components/GroupedMatchTable'
 import { LoadingScreen } from '../components/LoadingScreen'
-import { MatchInspector } from '../components/MatchInspector'
+import { ReviewPageHeader } from '../components/ReviewPageHeader'
+import { ReviewWorkspace } from '../components/ReviewWorkspace'
 import { ScanSummaryPanel } from '../components/ScanSummaryPanel'
+import { useBatchApproval } from '../hooks/useBatchApproval'
+import { useReviewQueries } from '../hooks/useReviewQueries'
 import {
-  JOB_STATUS,
-  MATCH_DECISION,
-  type MatchDecision,
-  type MediaMatch,
+  JOB_STATUS, MATCH_DECISION, type ManualMatchInput, type MatchDecision,
+  type MediaMatch, type SourceAction,
 } from '../types'
-import { formatBytes } from '../utils/format'
-import { episodeLabel, groupMediaMatches } from '../utils/reviewGrouping'
-
+import { groupMediaMatches, isEditableJobStatus, isReviewDecision } from '../utils/reviewGrouping'
+const DEFAULT_PAGE_SIZE = 20
 export function ReviewPage() {
-  const searchParams = new URLSearchParams(window.location.search)
   const queryClient = useQueryClient()
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null)
   const [selectedCandidateId, setSelectedCandidateId] = useState<number | null>(null)
-  const jobsQuery = useQuery({ queryKey: ['jobs'], queryFn: api.getJobs })
-  const selectedJobId = searchParams.get('job') ?? jobsQuery.data?.[0]?.id ?? ''
-  const matchesQuery = useQuery({
-    queryKey: ['matches', selectedJobId],
-    queryFn: () => api.getMatches(selectedJobId),
-    enabled: Boolean(selectedJobId),
-    refetchInterval: 4_000,
+  const [actionMessage, setActionMessage] = useState('')
+  const {
+    selectedJobId,
+    jobsQuery,
+    matchesQuery,
+    jobQuery,
+    sourceItemsQuery,
+  } = useReviewQueries({
+    page,
+    pageSize,
   })
-  const jobQuery = useQuery({
-    queryKey: ['job', selectedJobId],
-    queryFn: () => api.getJob(selectedJobId),
-    enabled: Boolean(selectedJobId),
-    refetchInterval: 4_000,
-  })
-  const sourceItemsQuery = useQuery({
-    queryKey: ['source-items', selectedJobId],
-    queryFn: () => api.getSourceItems(selectedJobId),
-    enabled: Boolean(selectedJobId),
-    refetchInterval: 4_000,
-  })
-  const selectedMatch = useMemo(
-    () =>
-      matchesQuery.data?.find((item) => item.id === selectedMatchId) ??
-      matchesQuery.data?.find((item) => isReviewDecision(item.decision)) ??
-      matchesQuery.data?.[0] ??
-      null,
-    [matchesQuery.data, selectedMatchId],
-  )
+  const selectedMatch = useMemo(() => {
+    const pageMatches = matchesQuery.data?.items ?? []
+    return (
+      pageMatches.find((item) => item.id === selectedMatchId) ??
+      pageMatches.find((item) => isReviewDecision(item.decision)) ??
+      pageMatches[0] ??
+      null
+    )
+  }, [matchesQuery.data?.items, selectedMatchId])
   const effectiveCandidateId =
     selectedCandidateId ??
     selectedMatch?.selected_tmdb_id ??
     selectedMatch?.candidates[0]?.tmdb_id ??
     null
-
+  const refreshReviewData = async () => {
+    await queryClient.invalidateQueries({ queryKey: ['matches', selectedJobId] })
+    await queryClient.invalidateQueries({ queryKey: ['job', selectedJobId] })
+    await queryClient.invalidateQueries({ queryKey: ['jobs'] })
+    await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+  }
+  const batchApproval = useBatchApproval({
+    jobId: selectedJobId,
+    pageMatches: matchesQuery.data?.items ?? [],
+    activeMatchId: selectedMatch?.id ?? null,
+    activeCandidateId: effectiveCandidateId,
+    onApproved: async (updatedItems) => {
+      setActionMessage(`已批量批准 ${updatedItems} 条匹配记录。`)
+      await refreshReviewData()
+    },
+  })
   const updateMutation = useMutation({
     mutationFn: ({
       match,
@@ -71,18 +77,56 @@ export function ReviewPage() {
         decision,
         candidateTmdbId: candidateId,
       }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['matches', selectedJobId] })
-      await queryClient.invalidateQueries({ queryKey: ['job', selectedJobId] })
-      await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    onSuccess: async (updatedMatch) => {
+      setActionMessage(
+        updatedMatch.decision === MATCH_DECISION.IGNORED
+          ? '已忽略当前文件，并自动定位下一条待审核项。'
+          : '匹配结果已保存。',
+      )
+      setSelectedMatchId(null)
+      setSelectedCandidateId(null)
+      await refreshReviewData()
     },
   })
-
+  const retryMutation = useMutation({
+    mutationFn: (matchId: string) =>
+      api.retryMatch({ jobId: selectedJobId, matchId }),
+    onSuccess: async (updatedMatch) => {
+      setSelectedMatchId(updatedMatch.id)
+      setSelectedCandidateId(
+        updatedMatch.selected_tmdb_id ?? updatedMatch.candidates[0]?.tmdb_id ?? null,
+      )
+      setActionMessage(
+        updatedMatch.candidates.length
+          ? '当前文件重试完成，请检查新的候选结果。'
+          : '重试完成但仍未找到候选，可使用手动匹配。',
+      )
+      await refreshReviewData()
+    },
+  })
+  const manualMatchMutation = useMutation({
+    mutationFn: ({ matchId, match }: { matchId: string; match: ManualMatchInput }) =>
+      api.assignManualMatch({ jobId: selectedJobId, matchId, match }),
+    onSuccess: async () => {
+      setActionMessage('手动匹配已保存并采用。')
+      setSelectedMatchId(null)
+      setSelectedCandidateId(null)
+      await refreshReviewData()
+    },
+  })
   const executeMutation = useMutation({
     mutationFn: () => api.executeJob(selectedJobId),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['job', selectedJobId] })
-      await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    onSuccess: refreshReviewData,
+  })
+  const cancelMutation = useMutation({
+    mutationFn: () => api.cancelJob(selectedJobId),
+    onSuccess: async (job) => {
+      setActionMessage(
+        job.status === JOB_STATUS.CANCELED
+          ? '任务已取消，未执行后续操作。'
+          : '已请求安全取消，当前文件处理结束后停止。',
+      )
+      await refreshReviewData()
     },
   })
   const groupUpdateMutation = useMutation({
@@ -98,25 +142,20 @@ export function ReviewPage() {
       })
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['matches', selectedJobId] })
-      await queryClient.invalidateQueries({ queryKey: ['job', selectedJobId] })
+      setActionMessage('当前影视分组已批量批准。')
+      await refreshReviewData()
     },
   })
   const sourceItemMutation = useMutation({
-    mutationFn: ({
-      itemId,
-      action,
-    }: {
-      itemId: string
-      action: 'DEFAULT' | 'INCLUDE' | 'EXCLUDE'
-    }) => api.updateSourceItem({ jobId: selectedJobId, itemId, action }),
+    mutationFn: ({ itemId, action }: { itemId: string; action: SourceAction }) =>
+      api.updateSourceItem({ jobId: selectedJobId, itemId, action }),
     onSuccess: async () => {
+      setActionMessage('扫描项处理策略已更新，任务正在重新扫描。')
       await queryClient.invalidateQueries({
         queryKey: ['source-items', selectedJobId],
       })
     },
   })
-
   if (
     jobsQuery.isPending ||
     matchesQuery.isPending ||
@@ -125,30 +164,48 @@ export function ReviewPage() {
   ) {
     return <LoadingScreen label="正在加载匹配审核" />
   }
+  const queryError =
+    jobsQuery.error ?? matchesQuery.error ?? jobQuery.error ?? sourceItemsQuery.error
+  if (queryError) return <ErrorNotice message={queryError.message} />
   if (
-    jobsQuery.isError ||
-    matchesQuery.isError ||
-    jobQuery.isError ||
-    sourceItemsQuery.isError
+    !jobsQuery.data ||
+    !matchesQuery.data ||
+    !jobQuery.data ||
+    !sourceItemsQuery.data
   ) {
-    const error =
-      jobsQuery.error ?? matchesQuery.error ?? jobQuery.error ?? sourceItemsQuery.error
-    return <ErrorNotice message={error?.message ?? '审核数据加载失败'} />
+    return <ErrorNotice message="审核数据不完整，请刷新后重试" />
   }
 
-  const matches = matchesQuery.data ?? []
-  const matchGroups = groupMediaMatches(matches)
   const job = jobQuery.data
-  const reviewCount = matches.filter((item) => isReviewDecision(item.decision)).length
+  const matchPage = matchesQuery.data
+  const matchGroups = groupMediaMatches(matchPage.items)
+  const isJobEditable = isEditableJobStatus(job.status)
+  const mutationError = [
+    updateMutation.error,
+    retryMutation.error,
+    manualMatchMutation.error,
+    executeMutation.error,
+    cancelMutation.error,
+    groupUpdateMutation.error,
+    sourceItemMutation.error,
+    batchApproval.error,
+  ].find((error) => error !== null)
 
-  const handleJobChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
-    window.location.assign(`/review?job=${encodeURIComponent(event.target.value)}`)
-  }
   const handleSelectMatch = (mediaMatch: MediaMatch) => {
     setSelectedMatchId(mediaMatch.id)
     setSelectedCandidateId(
       mediaMatch.selected_tmdb_id ?? mediaMatch.candidates[0]?.tmdb_id ?? null,
     )
+  }
+  const handlePageChange = (nextPage: number) => {
+    setPage(nextPage)
+    batchApproval.clearSelection()
+    setSelectedMatchId(null)
+    setSelectedCandidateId(null)
+  }
+  const handlePageSizeChange = (nextPageSize: number) => {
+    setPageSize(nextPageSize)
+    handlePageChange(1)
   }
   const handleApprove = () => {
     if (!selectedMatch || effectiveCandidateId === null) return
@@ -158,143 +215,84 @@ export function ReviewPage() {
       candidateId: effectiveCandidateId,
     })
   }
-  const handleIgnore = () => {
+  const handleToggleIgnore = () => {
     if (!selectedMatch) return
     updateMutation.mutate({
       match: selectedMatch,
-      decision: MATCH_DECISION.IGNORED,
+      decision:
+        selectedMatch.decision === MATCH_DECISION.IGNORED
+          ? MATCH_DECISION.REVIEW
+          : MATCH_DECISION.IGNORED,
     })
+  }
+  const handleRetry = () => {
+    if (selectedMatch) retryMutation.mutate(selectedMatch.id)
+  }
+  const handleManualMatch = (match: ManualMatchInput) => {
+    if (selectedMatch) {
+      manualMatchMutation.mutate({ matchId: selectedMatch.id, match })
+    }
   }
 
   return (
     <div className="review-page">
-      <section className="review-command-bar">
-        <div>
-          <span>当前任务</span>
-          <select
-            value={selectedJobId}
-            onChange={handleJobChange}
-            aria-label="选择审核任务"
-          >
-            {jobsQuery.data?.map((item) => (
-              <option value={item.id} key={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="review-summary">
-          <span>
-            <CheckCircle2 size={15} /> {job.approved_items} 已通过
-          </span>
-          <span>
-            <TriangleAlert size={15} /> {reviewCount} 需要审核
-          </span>
-          <span>
-            <CircleSlash size={15} /> {job.failed_items} 未识别
-          </span>
-        </div>
-        <button
-          className="button button-secondary"
-          type="button"
-          disabled={
-            !selectedMatch?.group_key ||
-            effectiveCandidateId === null ||
-            groupUpdateMutation.isPending
-          }
-          onClick={() => groupUpdateMutation.mutate()}
-        >
-          <CheckCircle2 size={16} aria-hidden="true" />
-          批准当前整组
-        </button>
-        <button
-          className="button button-primary"
-          type="button"
-          disabled={job.status !== JOB_STATUS.READY || executeMutation.isPending}
-          onClick={() => executeMutation.mutate()}
-        >
-          <Play size={16} aria-hidden="true" />
-          确认并执行
-        </button>
-      </section>
-
+      <ReviewPageHeader
+        jobs={jobsQuery.data}
+        job={job}
+        selectedJobId={selectedJobId}
+        canApproveGroup={
+          isJobEditable &&
+          Boolean(selectedMatch?.group_key) &&
+          effectiveCandidateId !== null
+        }
+        canApproveSelection={
+          isJobEditable && batchApproval.selectedCount > 0
+        }
+        selectedCount={batchApproval.selectedCount}
+        isApprovingGroup={groupUpdateMutation.isPending}
+        isApprovingSelection={batchApproval.isPending}
+        isExecuting={executeMutation.isPending}
+        isCancelling={cancelMutation.isPending}
+        actionMessage={actionMessage}
+        onApproveGroup={() => groupUpdateMutation.mutate()}
+        onApproveSelection={batchApproval.approveSelected}
+        onExecute={() => executeMutation.mutate()}
+        onCancel={() => cancelMutation.mutate()}
+      />
       <ScanSummaryPanel
-        items={sourceItemsQuery.data ?? []}
-        isSaving={sourceItemMutation.isPending}
+        items={sourceItemsQuery.data}
+        isSaving={sourceItemMutation.isPending || !isJobEditable}
         onChangeAction={(itemId, action) =>
           sourceItemMutation.mutate({ itemId, action })
         }
       />
-
-      <div className="review-workspace">
-        <aside className="source-browser">
-          <div className="panel-title">
-            <h2>源文件</h2>
-            <span>{matches.length}</span>
-          </div>
-          <div className="source-search">
-            <Search size={15} aria-hidden="true" />
-            <span>{job.source_directory_path}</span>
-          </div>
-          <ul className="source-list">
-            {matchGroups.map((group) => (
-              <li className="source-group" key={group.key}>
-                <h3>{group.label}</h3>
-                <ul>
-                  {group.items.map((mediaMatch) => (
-                    <li key={mediaMatch.id}>
-                      <button
-                        type="button"
-                        className={
-                          mediaMatch.id === selectedMatch?.id ? 'source-selected' : ''
-                        }
-                        onClick={() => handleSelectMatch(mediaMatch)}
-                      >
-                        <span className="file-icon" aria-hidden="true">
-                          ▷
-                        </span>
-                        <span>
-                          <strong>{episodeLabel(mediaMatch)}</strong>
-                          <small>
-                            {mediaMatch.filename} · {formatBytes(mediaMatch.size_bytes)}
-                          </small>
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </li>
-            ))}
-          </ul>
-        </aside>
-
-        <GroupedMatchTable
-          groups={matchGroups}
-          selectedMatchId={selectedMatch?.id ?? null}
-          onSelectMatch={handleSelectMatch}
-        />
-
-        <MatchInspector
-          mediaMatch={selectedMatch}
-          selectedCandidateId={effectiveCandidateId}
-          isSaving={updateMutation.isPending}
-          onSelectCandidate={setSelectedCandidateId}
-          onApprove={handleApprove}
-          onIgnore={handleIgnore}
-        />
-      </div>
-      {updateMutation.isError ? <ErrorNotice message={updateMutation.error.message} /> : null}
-      {executeMutation.isError ? <ErrorNotice message={executeMutation.error.message} /> : null}
-      {sourceItemMutation.isError ? (
-        <ErrorNotice message={sourceItemMutation.error.message} />
-      ) : null}
-      {groupUpdateMutation.isError ? (
-        <ErrorNotice message={groupUpdateMutation.error.message} />
-      ) : null}
+      <ReviewWorkspace
+        matchGroups={matchGroups}
+        matchPage={matchPage}
+        selectedMatch={selectedMatch}
+        selectedMatchIds={batchApproval.selectedMatchIds}
+        isSelectionEnabled={isJobEditable && !batchApproval.isPending}
+        selectedCandidateId={effectiveCandidateId}
+        isFetching={matchesQuery.isFetching}
+        isSaving={
+          updateMutation.isPending ||
+          manualMatchMutation.isPending ||
+          batchApproval.isPending ||
+          !isJobEditable
+        }
+        isRetrying={retryMutation.isPending}
+        onSelectMatch={handleSelectMatch}
+        onToggleMatchSelection={batchApproval.toggleMatchSelection}
+        onTogglePageSelection={batchApproval.togglePageSelection}
+        onSelectCandidate={setSelectedCandidateId}
+        onApprove={handleApprove}
+        onToggleIgnore={handleToggleIgnore}
+        onRetry={handleRetry}
+        onManualMatch={handleManualMatch}
+        onPageChange={handlePageChange}
+        onPageSizeChange={handlePageSizeChange}
+      />
+      {mutationError ? <ErrorNotice message={mutationError.message} /> : null}
     </div>
   )
-}
-
-function isReviewDecision(decision: MatchDecision): boolean {
-  return decision === MATCH_DECISION.REVIEW || decision === MATCH_DECISION.UNRESOLVED
 }

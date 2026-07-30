@@ -2,21 +2,25 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Sequence
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.dependencies import DatabaseSession, Services
 from app.database import SessionFactory
-from app.domain import JobStatus, SourceAction, SourceClassification
+from app.domain import JobStatus, MatchDecision, SourceAction, SourceClassification
 from app.models import AuditEvent, MediaMatch, OrganizeJob, SourceItem
 from app.schemas import (
+    BatchApproveMatchesRequest,
+    BatchApproveMatchesResult,
     CreateJobRequest,
     JobView,
+    ManualMatchRequest,
     MatchCandidate,
     MediaGroupUpdateResult,
+    MediaMatchPage,
     MediaMatchView,
     SourceItemView,
     UpdateMatchRequest,
@@ -67,20 +71,36 @@ async def scan_job(
         JobStatus.FAILED,
         JobStatus.REVIEW_REQUIRED,
         JobStatus.READY,
+        JobStatus.CANCELED,
     }:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="当前状态不能重新扫描",
         )
+    job.is_cancel_requested = False
+    await session.commit()
     await services.queue.enqueue("scan", job_id)
     return job
 
 
-@router.get("/{job_id}/matches", response_model=list[MediaMatchView])
+@router.get("/{job_id}/matches", response_model=MediaMatchPage)
 async def list_matches(
     job_id: str,
     session: DatabaseSession,
-) -> list[MediaMatchView]:
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
+    decision: MatchDecision | None = None,
+) -> MediaMatchPage:
+    await _get_job_or_404(session, job_id)
+    filters = [SourceItem.job_id == job_id]
+    if decision is not None:
+        filters.append(MediaMatch.decision == decision)
+    total = await session.scalar(
+        select(func.count(MediaMatch.id))
+        .join(SourceItem)
+        .where(*filters)
+    )
+    match_count = total or 0
     statement = (
         select(MediaMatch)
         .join(SourceItem)
@@ -88,11 +108,23 @@ async def list_matches(
             selectinload(MediaMatch.source_item),
             selectinload(MediaMatch.media_entity),
         )
-        .where(SourceItem.job_id == job_id)
-        .order_by(MediaMatch.confidence.desc())
+        .where(*filters)
+        .order_by(
+            MediaMatch.group_key.asc(),
+            MediaMatch.season_number.asc().nulls_first(),
+            SourceItem.relative_path.asc(),
+        )
+        .offset((page - 1) * page_size)
+        .limit(page_size)
     )
     matches = (await session.scalars(statement)).all()
-    return [_to_match_view(media_match) for media_match in matches]
+    return MediaMatchPage(
+        items=[_to_match_view(media_match) for media_match in matches],
+        total=match_count,
+        page=page,
+        page_size=page_size,
+        pages=(match_count + page_size - 1) // page_size,
+    )
 
 
 @router.get("/{job_id}/items", response_model=list[SourceItemView])
@@ -159,7 +191,7 @@ async def update_source_item(
 
 
 @router.put(
-    "/{job_id}/groups/{group_key}",
+    "/{job_id}/groups/{group_key:path}",
     response_model=MediaGroupUpdateResult,
 )
 async def update_media_group(
@@ -169,31 +201,43 @@ async def update_media_group(
     session: DatabaseSession,
     services: Services,
 ) -> MediaGroupUpdateResult:
-    matches = list(
-        (
-            await session.scalars(
-                select(MediaMatch)
-                .join(SourceItem)
-                .where(
-                    SourceItem.job_id == job_id,
-                    MediaMatch.group_key == group_key,
-                )
-            )
-        ).all()
-    )
-    if not matches:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="媒体分组不存在")
-    for media_match in matches:
-        await services.organizer.update_match(
+    try:
+        updated_items = await services.organizer.update_group_matches(
             job_id=job_id,
-            match_id=media_match.id,
+            group_key=group_key,
             request=UpdateMatchRequest(
                 decision=request.decision,
                 candidate_tmdb_id=request.candidate_tmdb_id,
             ),
             session=session,
         )
-    return MediaGroupUpdateResult(group_key=group_key, updated_items=len(matches))
+    except OrganizerError as error:
+        raise _organizer_http_error(error) from error
+    return MediaGroupUpdateResult(
+        group_key=group_key,
+        updated_items=updated_items,
+    )
+
+
+@router.put(
+    "/{job_id}/matches/batch",
+    response_model=BatchApproveMatchesResult,
+)
+async def batch_approve_matches(
+    job_id: str,
+    request: BatchApproveMatchesRequest,
+    session: DatabaseSession,
+    services: Services,
+) -> BatchApproveMatchesResult:
+    try:
+        updated_items = await services.organizer.approve_matches(
+            job_id=job_id,
+            request=request,
+            session=session,
+        )
+    except OrganizerError as error:
+        raise _organizer_http_error(error) from error
+    return BatchApproveMatchesResult(updated_items=updated_items)
 
 
 @router.put("/{job_id}/matches/{match_id}", response_model=MediaMatchView)
@@ -212,14 +256,64 @@ async def update_match(
             session=session,
         )
     except OrganizerError as error:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+        raise _organizer_http_error(error) from error
+    return await _load_match_view(session, media_match.id)
+
+
+@router.post(
+    "/{job_id}/matches/{match_id}/retry",
+    response_model=MediaMatchView,
+)
+async def retry_match(
+    job_id: str,
+    match_id: str,
+    session: DatabaseSession,
+    services: Services,
+) -> MediaMatchView:
+    try:
+        media_match = await services.organizer.retry_match(
+            job_id=job_id,
+            match_id=match_id,
+            session=session,
+        )
+    except OrganizerError as error:
+        raise _organizer_http_error(error) from error
+    return await _load_match_view(session, media_match.id)
+
+
+@router.post(
+    "/{job_id}/matches/{match_id}/manual",
+    response_model=MediaMatchView,
+)
+async def assign_manual_match(
+    job_id: str,
+    match_id: str,
+    request: ManualMatchRequest,
+    session: DatabaseSession,
+    services: Services,
+) -> MediaMatchView:
+    try:
+        media_match = await services.organizer.apply_manual_match(
+            job_id=job_id,
+            match_id=match_id,
+            request=request,
+            session=session,
+        )
+    except OrganizerError as error:
+        raise _organizer_http_error(error) from error
+    return await _load_match_view(session, media_match.id)
+
+
+async def _load_match_view(
+    session: AsyncSession, match_id: str
+) -> MediaMatchView:
     statement = (
         select(MediaMatch)
         .options(
             selectinload(MediaMatch.source_item),
             selectinload(MediaMatch.media_entity),
         )
-        .where(MediaMatch.id == media_match.id)
+        .where(MediaMatch.id == match_id)
     )
     refreshed_match = await session.scalar(statement)
     if refreshed_match is None:
@@ -241,6 +335,8 @@ async def execute_job(
             status_code=status.HTTP_409_CONFLICT,
             detail="仍有未审核或未识别文件",
         )
+    job.is_cancel_requested = False
+    await session.commit()
     await services.queue.enqueue("execute", job_id)
     return job
 
@@ -252,8 +348,10 @@ async def cancel_job(
     services: Services,
 ) -> OrganizeJob:
     job = await _get_job_or_404(session, job_id)
-    await services.organizer.request_cancel(job, session)
-    return job
+    try:
+        return await services.organizer.request_cancel(job, session)
+    except OrganizerError as error:
+        raise _organizer_http_error(error) from error
 
 
 @router.get("/{job_id}/events")
@@ -316,6 +414,16 @@ def _to_source_item_view(source_item: SourceItem) -> SourceItemView:
         is_reviewable=source_item.classification
         in {SourceClassification.EXTRA, SourceClassification.UNKNOWN},
     )
+
+
+def _organizer_http_error(error: OrganizerError) -> HTTPException:
+    error_message = str(error)
+    error_status = (
+        status.HTTP_404_NOT_FOUND
+        if "not found" in error_message.casefold()
+        else status.HTTP_409_CONFLICT
+    )
+    return HTTPException(status_code=error_status, detail=error_message)
 
 
 async def _event_stream(job_id: str) -> AsyncIterator[str]:

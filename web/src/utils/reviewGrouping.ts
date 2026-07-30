@@ -1,6 +1,17 @@
-import type { MediaMatch } from '../types'
+import {
+  JOB_STATUS,
+  MATCH_DECISION,
+  type JobStatus,
+  type MatchDecision,
+  type MediaMatch,
+} from '../types'
 
 const NUMBER_PAD_WIDTH = 2
+const EDITABLE_JOB_STATUSES: ReadonlySet<JobStatus> = new Set([
+  JOB_STATUS.REVIEW_REQUIRED,
+  JOB_STATUS.READY,
+  JOB_STATUS.FAILED,
+])
 
 export interface MediaMatchGroup {
   key: string
@@ -42,6 +53,21 @@ export function episodeLabel(mediaMatch: MediaMatch): string {
     .join('')
   const title = mediaMatch.episode_title ? ` · ${mediaMatch.episode_title}` : ''
   return `S${season}${episodes || 'E??'}${title}`
+}
+
+export function isReviewDecision(decision: MatchDecision): boolean {
+  return decision === MATCH_DECISION.REVIEW || decision === MATCH_DECISION.UNRESOLVED
+}
+
+export function isBatchApprovableMatch(mediaMatch: MediaMatch): boolean {
+  return (
+    isReviewDecision(mediaMatch.decision) &&
+    mediaMatch.candidates.length > 0
+  )
+}
+
+export function isEditableJobStatus(jobStatus: JobStatus): boolean {
+  return EDITABLE_JOB_STATUSES.has(jobStatus)
 }
 
 function compareMediaMatches(left: MediaMatch, right: MediaMatch): number {

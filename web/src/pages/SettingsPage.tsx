@@ -103,7 +103,7 @@ export function SettingsPage() {
         </div>
         <div className="settings-grid">
           <label className="field" htmlFor="tmdb-token">
-            <span>TMDB API Token</span>
+            <span>TMDB v3 API Key / v4 读取令牌</span>
             <div className="input-with-icon">
               <KeyRound size={16} aria-hidden="true" />
               <input

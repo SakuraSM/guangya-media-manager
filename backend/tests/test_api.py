@@ -61,12 +61,77 @@ def test_saves_settings_without_echoing_secrets() -> None:
     assert "ai_api_key" not in settings
 
 
+def test_paginates_match_results() -> None:
+    with TestClient(app) as client:
+        client.post("/api/session/login", json={"password": "change-me"})
+        jobs = client.get("/api/jobs").json()
+        review_job = next(job for job in jobs if job["status"] == "REVIEW_REQUIRED")
+
+        response = client.get(
+            f"/api/jobs/{review_job['id']}/matches",
+            params={"page": 1, "page_size": 2},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 4
+    assert payload["page"] == 1
+    assert payload["page_size"] == 2
+    assert payload["pages"] == 2
+    assert len(payload["items"]) == 2
+
+
+def test_batch_approves_selected_matches_atomically() -> None:
+    with TestClient(app) as client:
+        client.post("/api/session/login", json={"password": "change-me"})
+        jobs = client.get("/api/jobs").json()
+        review_job = next(job for job in jobs if job["status"] == "REVIEW_REQUIRED")
+        matches = client.get(f"/api/jobs/{review_job['id']}/matches").json()["items"]
+        selected_matches = [item for item in matches if item["candidates"]][:2]
+        original_decisions = {
+            item["id"]: item["decision"] for item in selected_matches
+        }
+
+        response = client.put(
+            f"/api/jobs/{review_job['id']}/matches/batch",
+            json={
+                "items": [
+                    {
+                        "match_id": item["id"],
+                        "candidate_tmdb_id": item["candidates"][0]["tmdb_id"],
+                    }
+                    for item in selected_matches
+                ]
+            },
+        )
+
+        refreshed_matches = client.get(
+            f"/api/jobs/{review_job['id']}/matches"
+        ).json()["items"]
+        refreshed_by_id = {item["id"]: item for item in refreshed_matches}
+        for item in selected_matches:
+            client.put(
+                f"/api/jobs/{review_job['id']}/matches/{item['id']}",
+                json={
+                    "decision": original_decisions[item["id"]],
+                    "candidate_tmdb_id": item["candidates"][0]["tmdb_id"],
+                },
+            )
+
+    assert response.status_code == 200
+    assert response.json()["updated_items"] == 2
+    assert all(
+        refreshed_by_id[item["id"]]["decision"] == "APPROVED"
+        for item in selected_matches
+    )
+
+
 def test_can_select_a_tmdb_candidate_for_review_match() -> None:
     with TestClient(app) as client:
         client.post("/api/session/login", json={"password": "change-me"})
         jobs = client.get("/api/jobs").json()
         review_job = next(job for job in jobs if job["status"] == "REVIEW_REQUIRED")
-        matches = client.get(f"/api/jobs/{review_job['id']}/matches").json()
+        matches = client.get(f"/api/jobs/{review_job['id']}/matches").json()["items"]
         review_match = next(
             media_match
             for media_match in matches
@@ -89,12 +154,82 @@ def test_can_select_a_tmdb_candidate_for_review_match() -> None:
     assert payload["target_path"]
 
 
+def test_retries_one_match_without_rescanning_job() -> None:
+    with TestClient(app) as client:
+        client.post("/api/session/login", json={"password": "change-me"})
+        jobs = client.get("/api/jobs").json()
+        review_job = next(job for job in jobs if job["status"] == "REVIEW_REQUIRED")
+        matches = client.get(f"/api/jobs/{review_job['id']}/matches").json()["items"]
+        media_match = next(item for item in matches if "三体" in item["filename"])
+
+        response = client.post(
+            f"/api/jobs/{review_job['id']}/matches/{media_match['id']}/retry"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "SINGLE_ITEM_RETRIED" in payload["reason_codes"]
+    assert payload["decision"] in {"REVIEW", "UNRESOLVED", "AUTO_APPROVED"}
+
+
+def test_manually_assigns_match_when_automatic_candidates_are_unusable() -> None:
+    with TestClient(app) as client:
+        client.post("/api/session/login", json={"password": "change-me"})
+        jobs = client.get("/api/jobs").json()
+        review_job = next(job for job in jobs if job["status"] == "REVIEW_REQUIRED")
+        matches = client.get(f"/api/jobs/{review_job['id']}/matches").json()["items"]
+        media_match = next(
+            item for item in matches if item["decision"] == "UNRESOLVED"
+        )
+
+        response = client.post(
+            f"/api/jobs/{review_job['id']}/matches/{media_match['id']}/manual",
+            json={
+                "tmdb_id": 987654,
+                "title": "手动匹配电影",
+                "original_title": "Manual Match",
+                "year": 2022,
+                "media_type": "MOVIE",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["decision"] == "APPROVED"
+    assert payload["selected_tmdb_id"] == 987654
+    assert "MANUAL_MATCH" in payload["reason_codes"]
+    assert payload["target_path"].startswith("Movies/手动匹配电影 (2022)/")
+
+
+def test_cancels_draft_job_immediately() -> None:
+    with TestClient(app) as client:
+        client.post("/api/session/login", json={"password": "change-me"})
+        create_response = client.post(
+            "/api/jobs",
+            json={
+                "name": "待取消任务",
+                "source_directory_id": "source",
+                "source_directory_path": "/光鸭云盘/未整理",
+                "target_directory_id": "target",
+                "target_directory_path": "/光鸭云盘/电影与剧集",
+            },
+        )
+        job_id = create_response.json()["id"]
+
+        response = client.post(f"/api/jobs/{job_id}/cancel")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "CANCELED"
+    assert payload["is_cancel_requested"] is True
+
+
 def test_executes_reviewed_job_into_library_layout() -> None:
     with TestClient(app) as client:
         client.post("/api/session/login", json={"password": "change-me"})
         jobs = client.get("/api/jobs").json()
         review_job = next(job for job in jobs if job["status"] == "REVIEW_REQUIRED")
-        matches = client.get(f"/api/jobs/{review_job['id']}/matches").json()
+        matches = client.get(f"/api/jobs/{review_job['id']}/matches").json()["items"]
         for media_match in matches:
             if media_match["decision"] == "REVIEW":
                 candidate = media_match["candidates"][0]

@@ -1,13 +1,12 @@
 from dataclasses import asdict
 from hashlib import sha256
-from xml.sax.saxutils import escape
 
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain import JobStatus, MatchDecision, MediaType
-from app.models import AuditEvent, MediaEntity, MediaEpisode, MediaSeason, OrganizeJob
+from app.domain import JobStatus, MatchDecision
+from app.models import AuditEvent, MediaEntity, OrganizeJob
 from app.schemas import MatchCandidate as MatchCandidateSchema
 from app.services.media_parser import ParsedMediaName
 from app.services.metadata import MetadataCandidate
@@ -187,46 +186,3 @@ def read_config_float(config: dict[str, object], key: str, default: float) -> fl
 def make_idempotency_key(action: str, *parts: str) -> str:
     digest = sha256("\x1f".join(parts).encode()).hexdigest()
     return f"{action}:{digest}"
-
-
-def render_nfo(entity: MediaEntity) -> str:
-    root_tag = "tvshow" if entity.media_type == MediaType.TV else "movie"
-    year = str(entity.year) if entity.year else ""
-    return (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        f"<{root_tag}>\n"
-        f"  <title>{escape(entity.title)}</title>\n"
-        f"  <originaltitle>{escape(entity.original_title)}</originaltitle>\n"
-        f"  <year>{year}</year>\n"
-        f"  <plot>{escape(entity.overview)}</plot>\n"
-        f'  <uniqueid type="tmdb" default="true">{entity.tmdb_id}</uniqueid>\n'
-        f"</{root_tag}>\n"
-    )
-
-
-def render_season_nfo(season: MediaSeason) -> str:
-    return (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        "<season>\n"
-        f"  <title>{escape(season.name)}</title>\n"
-        f"  <seasonnumber>{season.season_number}</seasonnumber>\n"
-        f"  <plot>{escape(season.overview)}</plot>\n"
-        "</season>\n"
-    )
-
-
-def render_episode_nfo(entity: MediaEntity, episode: MediaEpisode) -> str:
-    aired = episode.air_date.isoformat() if episode.air_date else ""
-    unique_id = str(episode.tmdb_id) if episode.tmdb_id is not None else ""
-    return (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        "<episodedetails>\n"
-        f"  <title>{escape(episode.name)}</title>\n"
-        f"  <showtitle>{escape(entity.title)}</showtitle>\n"
-        f"  <season>{episode.media_season.season_number}</season>\n"
-        f"  <episode>{episode.episode_number}</episode>\n"
-        f"  <aired>{aired}</aired>\n"
-        f"  <plot>{escape(episode.overview)}</plot>\n"
-        f'  <uniqueid type="tmdb" default="true">{unique_id}</uniqueid>\n'
-        "</episodedetails>\n"
-    )

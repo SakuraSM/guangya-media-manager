@@ -96,6 +96,7 @@ export interface Job {
   failed_items: number
   copied_bytes: number
   error_message: string | null
+  is_cancel_requested: boolean
   created_at: string
   updated_at: string
 }
@@ -138,6 +139,31 @@ export interface MediaMatch {
     release_group?: string
     part_number?: number | null
   }
+}
+
+export interface MediaMatchPage {
+  items: MediaMatch[]
+  total: number
+  page: number
+  page_size: number
+  pages: number
+}
+
+export interface ManualMatchInput {
+  tmdbId: number
+  title: string
+  originalTitle: string
+  year: number | null
+  mediaType: MediaType
+}
+
+export interface BatchMatchApprovalInput {
+  matchId: string
+  candidateTmdbId: number
+}
+
+export interface BatchApprovalResult {
+  updated_items: number
 }
 
 export interface SourceItem {
@@ -205,7 +231,12 @@ export interface CreateJobInput {
     generate_nfo: boolean
     download_poster: boolean
     download_fanart: boolean
+    download_backdrop_alias: boolean
     download_season_poster: boolean
+    download_episode_thumb: boolean
+    season_artwork_compat: boolean
+    scrape_metadata_language: 'zh-CN' | 'en-US' | 'ja-JP' | 'ko-KR'
+    scrape_image_quality: 'STANDARD' | 'ORIGINAL'
     rename_subtitles: boolean
     auto_approve_threshold: number
     review_threshold: number

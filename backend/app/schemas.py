@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -58,7 +59,12 @@ class JobConfig(BaseModel):
     generate_nfo: bool = True
     download_poster: bool = True
     download_fanart: bool = True
+    download_backdrop_alias: bool = True
     download_season_poster: bool = True
+    download_episode_thumb: bool = True
+    season_artwork_compat: bool = True
+    scrape_metadata_language: Literal["zh-CN", "en-US", "ja-JP", "ko-KR"] = "zh-CN"
+    scrape_image_quality: Literal["STANDARD", "ORIGINAL"] = "STANDARD"
     rename_subtitles: bool = True
     auto_approve_threshold: float = Field(default=0.9, ge=0.5, le=1)
     review_threshold: float = Field(default=0.65, ge=0, le=0.9)
@@ -92,6 +98,7 @@ class JobView(ApiModel):
     failed_items: int
     copied_bytes: int
     error_message: str | None
+    is_cancel_requested: bool
     created_at: datetime
     updated_at: datetime
 
@@ -132,6 +139,14 @@ class MediaMatchView(ApiModel):
     release_info: dict[str, object]
 
 
+class MediaMatchPage(BaseModel):
+    items: list[MediaMatchView]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
 class SourceItemView(ApiModel):
     id: str
     filename: str
@@ -162,6 +177,30 @@ class MediaGroupUpdateResult(BaseModel):
 class UpdateMatchRequest(BaseModel):
     decision: MatchDecision
     candidate_tmdb_id: int | None = None
+
+
+class BatchMatchApprovalItem(BaseModel):
+    match_id: str = Field(min_length=1, max_length=64)
+    candidate_tmdb_id: int = Field(gt=0)
+
+
+class BatchApproveMatchesRequest(BaseModel):
+    items: list[BatchMatchApprovalItem] = Field(
+        min_length=1,
+        max_length=100,
+    )
+
+
+class BatchApproveMatchesResult(BaseModel):
+    updated_items: int
+
+
+class ManualMatchRequest(BaseModel):
+    tmdb_id: int = Field(gt=0)
+    title: str = Field(min_length=1, max_length=256)
+    original_title: str = Field(default="", max_length=256)
+    year: int | None = Field(default=None, ge=1870, le=2100)
+    media_type: MediaType
 
 
 class DashboardMetrics(BaseModel):

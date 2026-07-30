@@ -1,5 +1,7 @@
 import type {
   AppSettings,
+  BatchApprovalResult,
+  BatchMatchApprovalInput,
   CloudDirectory,
   CloudLoginStart,
   CloudLoginStatus,
@@ -7,8 +9,10 @@ import type {
   Dashboard,
   Job,
   LibraryItem,
+  ManualMatchInput,
   MatchDecision,
   MediaMatch,
+  MediaMatchPage,
   SourceAction,
   SourceItem,
   SessionState,
@@ -44,6 +48,26 @@ interface UpdateMediaGroupInput {
   groupKey: string
   decision: MatchDecision
   candidateTmdbId?: number
+}
+
+interface GetMatchesInput {
+  jobId: string
+  page: number
+  pageSize: number
+}
+
+interface MatchActionInput {
+  jobId: string
+  matchId: string
+}
+
+interface BatchApproveMatchesInput {
+  jobId: string
+  items: BatchMatchApprovalInput[]
+}
+
+interface AssignManualMatchInput extends MatchActionInput {
+  match: ManualMatchInput
 }
 
 async function requestJson<ResponseBody>(
@@ -92,8 +116,13 @@ export const api = {
     requestJson<Job>(`/jobs/${jobId}/execute`, { method: 'POST' }),
   cancelJob: (jobId: string) =>
     requestJson<Job>(`/jobs/${jobId}/cancel`, { method: 'POST' }),
-  getMatches: (jobId: string) =>
-    requestJson<MediaMatch[]>(`/jobs/${jobId}/matches`),
+  getMatches: ({ jobId, page, pageSize }: GetMatchesInput) => {
+    const query = new URLSearchParams({
+      page: String(page),
+      page_size: String(pageSize),
+    })
+    return requestJson<MediaMatchPage>(`/jobs/${jobId}/matches?${query.toString()}`)
+  },
   getSourceItems: (jobId: string) =>
     requestJson<SourceItem[]>(`/jobs/${jobId}/items`),
   updateSourceItem: ({ jobId, itemId, action }: UpdateSourceItemInput) =>
@@ -130,6 +159,31 @@ export const api = {
         }),
       },
     ),
+  batchApproveMatches: ({ jobId, items }: BatchApproveMatchesInput) =>
+    requestJson<BatchApprovalResult>(`/jobs/${jobId}/matches/batch`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        items: items.map((item) => ({
+          match_id: item.matchId,
+          candidate_tmdb_id: item.candidateTmdbId,
+        })),
+      }),
+    }),
+  retryMatch: ({ jobId, matchId }: MatchActionInput) =>
+    requestJson<MediaMatch>(`/jobs/${jobId}/matches/${matchId}/retry`, {
+      method: 'POST',
+    }),
+  assignManualMatch: ({ jobId, matchId, match }: AssignManualMatchInput) =>
+    requestJson<MediaMatch>(`/jobs/${jobId}/matches/${matchId}/manual`, {
+      method: 'POST',
+      body: JSON.stringify({
+        tmdb_id: match.tmdbId,
+        title: match.title,
+        original_title: match.originalTitle,
+        year: match.year,
+        media_type: match.mediaType,
+      }),
+    }),
   getDirectories: (parentId = '', parentPath = '/光鸭云盘') => {
     const query = new URLSearchParams({ parent_id: parentId, parent_path: parentPath })
     return requestJson<CloudDirectory[]>(`/cloud/directories?${query.toString()}`)

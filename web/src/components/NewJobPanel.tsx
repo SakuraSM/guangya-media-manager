@@ -1,16 +1,22 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Check, ScanSearch, ShieldCheck } from 'lucide-react'
+import { ScanSearch, ShieldCheck } from 'lucide-react'
 import { api } from '../api/client'
 import type { CloudDirectory, CreateJobInput } from '../types'
 import { DirectoryPicker } from './DirectoryPicker'
 import { ErrorNotice } from './ErrorNotice'
+import { ScrapingOptions } from './ScrapingOptions'
 
 const DEFAULT_CONFIG: CreateJobInput['config'] = {
   generate_nfo: true,
   download_poster: true,
   download_fanart: true,
+  download_backdrop_alias: true,
   download_season_poster: true,
+  download_episode_thumb: true,
+  season_artwork_compat: true,
+  scrape_metadata_language: 'zh-CN',
+  scrape_image_quality: 'STANDARD',
   rename_subtitles: true,
   auto_approve_threshold: 0.9,
   review_threshold: 0.65,
@@ -61,14 +67,6 @@ export function NewJobPanel({ onCreated }: NewJobPanelProps) {
           .filter(Boolean),
       },
     })
-  }
-
-  const handleConfigChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const fieldName = event.target.name as keyof typeof config
-    setConfig((currentConfig) => ({
-      ...currentConfig,
-      [fieldName]: event.target.checked,
-    }))
   }
 
   return (
@@ -146,31 +144,15 @@ export function NewJobPanel({ onCreated }: NewJobPanelProps) {
           />
         </label>
       </div>
-      <fieldset className="option-fieldset">
-        <legend>额外操作</legend>
-        <div className="option-row">
-          {[
-            ['generate_nfo', '生成 NFO'],
-            ['download_poster', '下载海报'],
-            ['download_fanart', '下载背景图'],
-            ['download_season_poster', '下载季度海报'],
-            ['rename_subtitles', '重命名字幕'],
-          ].map(([name, label]) => (
-            <label className="checkbox-label" key={name}>
-              <input
-                type="checkbox"
-                name={name}
-                checked={Boolean(config[name as keyof typeof config])}
-                onChange={handleConfigChange}
-              />
-              <span className="custom-checkbox" aria-hidden="true">
-                <Check size={12} />
-              </span>
-              {label}
-            </label>
-          ))}
-        </div>
-      </fieldset>
+      <ScrapingOptions
+        config={config}
+        onChange={(changes) =>
+          setConfig((currentConfig) => ({
+            ...currentConfig,
+            ...changes,
+          }))
+        }
+      />
       <div className="safe-operation-note">
         <ShieldCheck size={19} aria-hidden="true" />
         <div>

@@ -5,16 +5,25 @@ import logging
 from redis.asyncio import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bootstrap import build_organizer_service, build_provider
 from app.config import get_settings
 from app.database import SessionFactory
+from app.domain import JobStatus
+from app.models import AuditEvent, OrganizeJob
 from app.security import TokenCipher
 from app.services.login_manager import LoginManager
+from app.services.organizer import OrganizerError
 from app.services.queue import QUEUE_NAME
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+INTERRUPTED_SCAN_STATUSES = {
+    JobStatus.SCANNING,
+    JobStatus.IDENTIFYING,
+}
 
 
 async def run_worker() -> None:
@@ -23,6 +32,7 @@ async def run_worker() -> None:
     login_manager = LoginManager(provider, TokenCipher(settings))
     async with SessionFactory() as session:
         await login_manager.restore_session(session)
+        await recover_interrupted_scans(session)
     organizer = await build_organizer_service(provider)
     redis = Redis.from_url(
         settings.redis_url,
@@ -45,9 +55,51 @@ async def run_worker() -> None:
             payload = json.loads(raw_payload)
             async with SessionFactory() as session:
                 await login_manager.restore_session(session)
-            await organizer.run_action(str(payload["action"]), str(payload["job_id"]))
+            action = str(payload["action"])
+            job_id = str(payload["job_id"])
+            try:
+                await organizer.run_action(action, job_id)
+            except (OrganizerError, RuntimeError):
+                logger.exception(
+                    "Queued job action failed",
+                    extra={"job_id": job_id, "action": action},
+                )
     finally:
         await redis.aclose()
+
+
+async def recover_interrupted_scans(session: AsyncSession) -> None:
+    interrupted_jobs = list(
+        (
+            await session.scalars(
+                select(OrganizeJob).where(
+                    OrganizeJob.status.in_(INTERRUPTED_SCAN_STATUSES)
+                )
+            )
+        ).all()
+    )
+    for job in interrupted_jobs:
+        job.status = (
+            JobStatus.CANCELED
+            if job.is_cancel_requested
+            else JobStatus.FAILED
+        )
+        job.current_stage = "Worker 重启，扫描已停止"
+        job.error_message = (
+            None
+            if job.is_cancel_requested
+            else "扫描因 Worker 重启中断，请重新扫描"
+        )
+        session.add(
+            AuditEvent(
+                job_id=job.id,
+                event_type="SCAN_INTERRUPTED",
+                message="Worker 重启后已安全终止旧扫描，请重新扫描",
+                severity="warning",
+            )
+        )
+    if interrupted_jobs:
+        await session.commit()
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@ import asyncio
 import json
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 
 import httpx
@@ -17,6 +17,8 @@ TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
 HTTP_TIMEOUT_SECONDS = 15
 TMDB_SEASON_TIMEOUT_SECONDS = 8
 TMDB_SEASON_MAX_ATTEMPTS = 2
+TMDB_SEARCH_CONCURRENCY = 4
+AI_RECOGNITION_CONCURRENCY = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +55,20 @@ class SeasonMetadata:
     snapshot: dict[str, object]
 
 
+@dataclass(frozen=True, slots=True)
+class MetadataResolutionRequest:
+    filename: str
+    parent_path: str
+    parsed: ParsedMediaName
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataResolution:
+    parsed: ParsedMediaName
+    candidates: tuple[MetadataCandidate, ...]
+    requires_manual_confirmation: bool
+
+
 class AiRecognition(BaseModel):
     media_type: MediaType
     title: str
@@ -64,7 +80,16 @@ class AiRecognition(BaseModel):
 
 
 class MetadataServiceError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: str = "METADATA_FAILED",
+        http_status: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+        self.http_status = http_status
 
 
 AI_RESPONSE_FENCE = re.compile(
@@ -99,14 +124,15 @@ def parse_ai_recognition(content: str) -> AiRecognition:
 
 class TmdbService:
     def __init__(self, settings: Settings) -> None:
-        self._token = settings.tmdb_api_token
+        self._token = settings.tmdb_api_token.strip()
+        self._is_demo_mode = settings.demo_mode
 
     def configure(self, token: str) -> None:
-        self._token = token
+        self._token = token.strip()
 
     async def search(self, parsed: ParsedMediaName) -> list[MetadataCandidate]:
         if not self._token:
-            return demo_candidates_for(parsed)
+            return demo_candidates_for(parsed) if self._is_demo_mode else []
         endpoint = "search/tv" if parsed.media_type == MediaType.TV else "search/movie"
         parameters: dict[str, str | int] = {
             "query": parsed.title,
@@ -157,6 +183,26 @@ class TmdbService:
             snapshot=_object_snapshot(payload),
         )
 
+    async def get_media_details(
+        self,
+        *,
+        tmdb_id: int,
+        media_type: MediaType,
+        language: str,
+    ) -> dict[str, object]:
+        if self._is_demo_mode or not self._token:
+            return {}
+        endpoint_type = "tv" if media_type == MediaType.TV else "movie"
+        return await self._get_json(
+            f"{endpoint_type}/{tmdb_id}",
+            {
+                "language": language,
+                "append_to_response": (
+                    "credits,external_ids,release_dates,content_ratings"
+                ),
+            },
+        )
+
     async def _get_json(
         self,
         endpoint: str,
@@ -165,14 +211,19 @@ class TmdbService:
         timeout_seconds: int = HTTP_TIMEOUT_SECONDS,
         max_attempts: int = MAX_METADATA_ATTEMPTS,
     ) -> dict[str, object]:
-        headers = {"Authorization": f"Bearer {self._token}"}
+        request_parameters = dict(parameters)
+        headers: dict[str, str] = {}
+        if _is_tmdb_v3_api_key(self._token):
+            request_parameters["api_key"] = self._token
+        else:
+            headers["Authorization"] = f"Bearer {self._token}"
         last_error: httpx.HTTPError | None = None
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
             for attempt in range(max_attempts):
                 try:
                     response = await client.get(
                         f"{TMDB_API_BASE_URL}/{endpoint}",
-                        params=parameters,
+                        params=request_parameters,
                         headers=headers,
                     )
                     response.raise_for_status()
@@ -180,11 +231,29 @@ class TmdbService:
                     if not isinstance(payload, dict):
                         raise MetadataServiceError("TMDB returned a non-object response")
                     return {str(key): value for key, value in payload.items()}
+                except httpx.HTTPStatusError as error:
+                    if error.response.status_code in {401, 403}:
+                        raise MetadataServiceError(
+                            "TMDB authentication failed",
+                            reason_code="TMDB_AUTH_FAILED",
+                            http_status=error.response.status_code,
+                        ) from error
+                    last_error = error
+                    if attempt + 1 < max_attempts:
+                        await asyncio.sleep(RETRY_BASE_DELAY_SECONDS * 2**attempt)
+                except json.JSONDecodeError as error:
+                    if attempt + 1 < max_attempts:
+                        await asyncio.sleep(RETRY_BASE_DELAY_SECONDS * 2**attempt)
+                        continue
+                    raise MetadataServiceError(
+                        "TMDB returned invalid JSON",
+                        reason_code="TMDB_INVALID_RESPONSE",
+                    ) from error
                 except httpx.HTTPError as error:
                     last_error = error
                     if attempt + 1 < max_attempts:
                         await asyncio.sleep(RETRY_BASE_DELAY_SECONDS * 2**attempt)
-        raise MetadataServiceError("TMDB request failed") from last_error
+        raise _tmdb_request_error(last_error)
 
 
 class AiRecognitionService:
@@ -201,8 +270,8 @@ class AiRecognitionService:
     async def recognize(
         self, *, filename: str, parent_path: str, parsed: ParsedMediaName
     ) -> ParsedMediaName:
-        if not self._api_key or parsed.confidence >= 0.75:
-            return parsed
+        if not self._api_key:
+            return _append_reason_codes(parsed, "AI_FALLBACK", "AI_NOT_CONFIGURED")
         request_payload = {
             "model": self._model,
             "response_format": {"type": "json_object"},
@@ -225,7 +294,7 @@ class AiRecognitionService:
             ],
         }
         headers = {"Authorization": f"Bearer {self._api_key}"}
-        last_error: MetadataServiceError | None = None
+        failure_reason = "AI_REQUEST_FAILED"
         async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
             for attempt in range(MAX_METADATA_ATTEMPTS):
                 try:
@@ -244,57 +313,170 @@ class AiRecognitionService:
                     httpx.HTTPError,
                     KeyError,
                     IndexError,
+                    json.JSONDecodeError,
                     TypeError,
                     MetadataServiceError,
                 ) as error:
-                    last_error = (
-                        error
-                        if isinstance(error, MetadataServiceError)
-                        else MetadataServiceError("AI recognition request failed")
-                    )
+                    failure_reason = _ai_failure_reason(error)
                     if attempt + 1 < MAX_METADATA_ATTEMPTS:
                         await asyncio.sleep(RETRY_BASE_DELAY_SECONDS * 2**attempt)
-        return ParsedMediaName(
-            media_type=parsed.media_type,
-            title=parsed.title,
-            year=parsed.year,
-            season_number=parsed.season_number,
-            episode_numbers=parsed.episode_numbers,
-            edition=parsed.edition,
-            confidence=parsed.confidence,
-            reason_codes=(
-                *parsed.reason_codes,
-                "AI_FALLBACK",
-                type(last_error).__name__ if last_error else "AI_UNKNOWN_ERROR",
-            ),
-            is_ignored=parsed.is_ignored,
-            episode_date=parsed.episode_date,
-            quality_tags=parsed.quality_tags,
-            release_group=parsed.release_group,
-            part_number=parsed.part_number,
-            context_group=parsed.context_group,
+        return _append_reason_codes(parsed, "AI_FALLBACK", failure_reason)
+
+
+class MetadataResolver:
+    def __init__(
+        self,
+        *,
+        tmdb_service: TmdbService,
+        ai_service: AiRecognitionService,
+    ) -> None:
+        self._tmdb_service = tmdb_service
+        self._ai_service = ai_service
+        self._tmdb_semaphore = asyncio.Semaphore(TMDB_SEARCH_CONCURRENCY)
+        self._ai_semaphore = asyncio.Semaphore(AI_RECOGNITION_CONCURRENCY)
+
+    async def resolve(
+        self, request: MetadataResolutionRequest
+    ) -> MetadataResolution:
+        parsed, primary_candidates = await self._search_tmdb(
+            request.parsed,
+            success_reason="TMDB_PRIMARY_MATCH",
+            empty_reason="TMDB_NO_RESULTS",
+            failure_reason="TMDB_FAILED",
         )
+        if primary_candidates:
+            return MetadataResolution(
+                parsed=parsed,
+                candidates=primary_candidates,
+                requires_manual_confirmation=False,
+            )
+
+        async with self._ai_semaphore:
+            recognized = await self._ai_service.recognize(
+                filename=request.filename,
+                parent_path=request.parent_path,
+                parsed=parsed,
+            )
+        if "AI_RECOGNIZED" not in recognized.reason_codes:
+            return MetadataResolution(
+                parsed=recognized,
+                candidates=(),
+                requires_manual_confirmation=False,
+            )
+
+        recognized = _append_reason_codes(
+            recognized,
+            "AI_MANUAL_CONFIRMATION_REQUIRED",
+        )
+        recognized, fallback_candidates = await self._search_tmdb(
+            recognized,
+            success_reason="TMDB_AI_QUERY_MATCHED",
+            empty_reason="TMDB_AI_QUERY_NO_RESULTS",
+            failure_reason="TMDB_AI_QUERY_FAILED",
+        )
+        return MetadataResolution(
+            parsed=recognized,
+            candidates=fallback_candidates,
+            requires_manual_confirmation=True,
+        )
+
+    async def _search_tmdb(
+        self,
+        parsed: ParsedMediaName,
+        *,
+        success_reason: str,
+        empty_reason: str,
+        failure_reason: str,
+    ) -> tuple[ParsedMediaName, tuple[MetadataCandidate, ...]]:
+        async with self._tmdb_semaphore:
+            try:
+                candidates = tuple(await self._tmdb_service.search(parsed))
+            except MetadataServiceError as error:
+                resolved_reason = (
+                    error.reason_code
+                    if error.reason_code.startswith("TMDB_")
+                    else failure_reason
+                )
+                return _append_reason_codes(parsed, resolved_reason), ()
+        reason = success_reason if candidates else empty_reason
+        return _append_reason_codes(parsed, reason), candidates
 
 
 def _merge_ai_recognition(
     parsed: ParsedMediaName, recognition: AiRecognition
 ) -> ParsedMediaName:
-    return ParsedMediaName(
-            media_type=recognition.media_type,
-            title=recognition.title,
-            year=recognition.year,
-            season_number=recognition.season,
-            episode_numbers=tuple(recognition.episodes),
-            edition=recognition.edition or "",
-            confidence=max(parsed.confidence, recognition.confidence),
-            reason_codes=(*parsed.reason_codes, "AI_RECOGNIZED"),
-            is_ignored=parsed.is_ignored,
-            episode_date=parsed.episode_date,
-            quality_tags=parsed.quality_tags,
-            release_group=parsed.release_group,
-            part_number=parsed.part_number,
-            context_group=parsed.context_group,
+    return replace(
+        parsed,
+        media_type=recognition.media_type,
+        title=recognition.title,
+        year=recognition.year,
+        season_number=recognition.season,
+        episode_numbers=tuple(recognition.episodes),
+        edition=recognition.edition or "",
+        confidence=max(parsed.confidence, recognition.confidence),
+        reason_codes=(*parsed.reason_codes, "AI_RECOGNIZED"),
+    )
+
+
+def _append_reason_codes(
+    parsed: ParsedMediaName, *reason_codes: str
+) -> ParsedMediaName:
+    return replace(
+        parsed,
+        reason_codes=tuple(
+            dict.fromkeys((*parsed.reason_codes, *reason_codes))
+        ),
+    )
+
+
+def _ai_failure_reason(error: BaseException) -> str:
+    if isinstance(error, json.JSONDecodeError) or (
+        isinstance(error, MetadataServiceError)
+        and (
+            "invalid" in str(error).casefold()
+            or "non-object" in str(error).casefold()
+            or "non-text" in str(error).casefold()
         )
+    ):
+        return "AI_INVALID_RESPONSE"
+    return "AI_REQUEST_FAILED"
+
+
+def _is_tmdb_v3_api_key(token: str) -> bool:
+    return len(token) == 32 and all(
+        character in "0123456789abcdefABCDEF" for character in token
+    )
+
+
+def _tmdb_request_error(
+    error: httpx.HTTPError | None,
+) -> MetadataServiceError:
+    if isinstance(error, httpx.TimeoutException):
+        return MetadataServiceError(
+            "TMDB request timed out",
+            reason_code="TMDB_TIMEOUT",
+        )
+    if isinstance(error, httpx.ConnectError):
+        return MetadataServiceError(
+            "TMDB connection failed",
+            reason_code="TMDB_CONNECTION_FAILED",
+        )
+    if isinstance(error, httpx.HTTPStatusError):
+        status_code = error.response.status_code
+        reason_code = (
+            "TMDB_RATE_LIMITED"
+            if status_code == 429
+            else "TMDB_HTTP_FAILED"
+        )
+        return MetadataServiceError(
+            "TMDB HTTP request failed",
+            reason_code=reason_code,
+            http_status=status_code,
+        )
+    return MetadataServiceError(
+        "TMDB request failed",
+        reason_code="TMDB_FAILED",
+    )
 
 
 def demo_candidates_for(parsed: ParsedMediaName) -> list[MetadataCandidate]:

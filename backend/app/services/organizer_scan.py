@@ -27,9 +27,16 @@ from app.services.media_parser import (
 from app.services.metadata import (
     AiRecognitionService,
     MetadataCandidate,
+    MetadataResolutionRequest,
+    MetadataResolver,
     MetadataServiceError,
     SeasonMetadata,
     TmdbService,
+)
+from app.services.organizer_scan_progress import (
+    RULE_PARSE_COMPLETE_PROGRESS,
+    IncrementalMatchStore,
+    PendingMediaRecord,
 )
 from app.services.organizer_support import (
     OrganizerError,
@@ -52,9 +59,9 @@ SCAN_PROGRESS = 0.12
 IDENTIFY_PROGRESS = 0.36
 READY_PROGRESS = 0.45
 MAX_SCAN_DEPTH = 24
-AI_GROUP_CONCURRENCY = 2
-TMDB_SEARCH_CONCURRENCY = 4
 TMDB_SEASON_CONCURRENCY = 4
+METADATA_COMPLETE_PROGRESS = 0.44
+METADATA_COMMIT_BATCH_SIZE = 10
 
 
 class ScanWorkflow:
@@ -68,7 +75,10 @@ class ScanWorkflow:
         self._session_factory = session_factory
         self._provider = provider
         self._tmdb_service = tmdb_service
-        self._ai_service = ai_service
+        self._metadata_resolver = MetadataResolver(
+            tmdb_service=tmdb_service,
+            ai_service=ai_service,
+        )
 
     async def run(self, job_id: str) -> None:
         async with self._session_factory() as session:
@@ -78,8 +88,11 @@ class ScanWorkflow:
                 JobStatus.FAILED,
                 JobStatus.REVIEW_REQUIRED,
                 JobStatus.READY,
+                JobStatus.CANCELED,
             }:
                 raise OrganizerError(f"Job {job_id} cannot be scanned from {job.status}")
+            if job.is_cancel_requested:
+                return
             await session.execute(delete(SourceItem).where(SourceItem.job_id == job_id))
             job.error_message = None
             job.total_items = 0
@@ -100,6 +113,9 @@ class ScanWorkflow:
                     root_id=job.source_directory_id,
                     root_path=job.source_directory_path,
                 )
+                if await _is_cancel_requested(session, job.id):
+                    await _cancel_scan(session, job)
+                    return
                 classified_nodes = [
                     (
                         node,
@@ -183,21 +199,42 @@ class ScanWorkflow:
         recognition_cache: dict[str, ParsedMediaName] = {}
         candidate_cache: dict[str, list[MetadataCandidate]] = {}
         season_cache: dict[tuple[int, int], SeasonMetadata | None] = {}
+        pending_records = await IncrementalMatchStore(
+            session,
+            job,
+        ).persist_rule_results(media_nodes)
+        if await _is_cancel_requested(session, job.id):
+            await _cancel_scan(session, job)
+            return
+        job.progress = RULE_PARSE_COMPLETE_PROGRESS
+        job.current_stage = (
+            f"查询 TMDB/AI 元数据（已解析 {len(pending_records)} 条）"
+        )
+        await session.commit()
         await self._prefetch_group_metadata(
             job,
             media_nodes,
             recognition_cache,
             candidate_cache,
         )
+        if await _is_cancel_requested(session, job.id):
+            await _cancel_scan(session, job)
+            return
         group_seasons = _group_season_numbers(
             media_nodes,
             job.source_directory_path,
         )
-        for cloud_node in media_nodes:
+        for item_number, pending_record in enumerate(
+            pending_records,
+            start=1,
+        ):
+            if await _is_cancel_requested(session, job.id):
+                await _cancel_scan(session, job)
+                return
             decision = await self._identify_node(
                 session=session,
                 job=job,
-                cloud_node=cloud_node,
+                pending_record=pending_record,
                 auto_threshold=auto_threshold,
                 review_threshold=review_threshold,
                 recognition_cache=recognition_cache,
@@ -206,6 +243,17 @@ class ScanWorkflow:
                 group_seasons=group_seasons,
             )
             decisions.append(decision)
+            if _should_commit_metadata_batch(
+                item_number,
+                len(pending_records),
+            ):
+                _update_metadata_progress(
+                    job,
+                    decisions,
+                    item_number,
+                    len(pending_records),
+                )
+                await session.commit()
         await self._associate_subtitles(
             session, job, subtitle_nodes
         )
@@ -231,58 +279,29 @@ class ScanWorkflow:
                 (cloud_node, parsed),
             )
 
-        ai_semaphore = asyncio.Semaphore(AI_GROUP_CONCURRENCY)
-
-        async def recognize_group(
-            group_key: str,
-            cloud_node: CloudNode,
-            parsed: ParsedMediaName,
-        ) -> tuple[str, ParsedMediaName]:
-            async with ai_semaphore:
-                recognized = await self._ai_service.recognize(
-                    filename=cloud_node.name,
-                    parent_path=_relative_path(
-                        str(PurePosixPath(cloud_node.path).parent),
-                        job.source_directory_path,
-                    ),
-                    parsed=parsed,
+        group_keys = tuple(representatives)
+        resolutions = await asyncio.gather(
+            *(
+                self._metadata_resolver.resolve(
+                    MetadataResolutionRequest(
+                        filename=representatives[group_key][0].name,
+                        parent_path=_relative_path(
+                            str(
+                                PurePosixPath(
+                                    representatives[group_key][0].path
+                                ).parent
+                            ),
+                            job.source_directory_path,
+                        ),
+                        parsed=representatives[group_key][1],
+                    )
                 )
-            return group_key, recognized
-
-        recognized_groups = await asyncio.gather(
-            *(
-                recognize_group(group_key, cloud_node, parsed)
-                for group_key, (cloud_node, parsed) in representatives.items()
+                for group_key in group_keys
             )
         )
-        recognition_cache.update(dict(recognized_groups))
-
-        tmdb_semaphore = asyncio.Semaphore(TMDB_SEARCH_CONCURRENCY)
-
-        async def search_group(
-            group_key: str,
-            parsed: ParsedMediaName,
-        ) -> tuple[str, ParsedMediaName, list[MetadataCandidate]]:
-            async with tmdb_semaphore:
-                try:
-                    candidates = await self._tmdb_service.search(parsed)
-                except MetadataServiceError:
-                    candidates = []
-                    parsed = _append_reason(parsed, "TMDB_FAILED")
-                else:
-                    if not candidates:
-                        parsed = _append_reason(parsed, "TMDB_NO_RESULTS")
-            return group_key, parsed, list(candidates)
-
-        searched_groups = await asyncio.gather(
-            *(
-                search_group(group_key, parsed)
-                for group_key, parsed in recognition_cache.items()
-            )
-        )
-        for group_key, parsed, candidates in searched_groups:
-            recognition_cache[group_key] = parsed
-            candidate_cache[group_key] = candidates
+        for group_key, resolution in zip(group_keys, resolutions, strict=True):
+            recognition_cache[group_key] = resolution.parsed
+            candidate_cache[group_key] = list(resolution.candidates)
 
     async def _associate_subtitles(
         self,
@@ -359,7 +378,7 @@ class ScanWorkflow:
         *,
         session: AsyncSession,
         job: OrganizeJob,
-        cloud_node: CloudNode,
+        pending_record: PendingMediaRecord,
         auto_threshold: float,
         review_threshold: float,
         recognition_cache: dict[str, ParsedMediaName],
@@ -367,55 +386,49 @@ class ScanWorkflow:
         season_cache: dict[tuple[int, int], SeasonMetadata | None],
         group_seasons: dict[str, frozenset[int]],
     ) -> MatchDecision:
+        cloud_node = pending_record.cloud_node
+        source_item = pending_record.source_item
+        media_match = pending_record.media_match
+        parsed = pending_record.parsed
+        group_key = pending_record.group_key
         parent_path = str(PurePosixPath(cloud_node.path).parent)
-        parsed = parse_media_filename(
-            cloud_node.name,
-            parent_path=parent_path,
-            source_root=job.source_directory_path,
-        )
-        group_key = _group_key(parsed, parent_path)
-        source_item = SourceItem(
-            job_id=job.id,
-            cloud_file_id=cloud_node.id,
-            parent_file_id=cloud_node.parent_id,
-            source_path=cloud_node.path,
-            filename=cloud_node.name,
-            extension=PurePosixPath(cloud_node.name).suffix,
-            size_bytes=cloud_node.size_bytes,
-            fingerprint=cloud_node.fingerprint,
-            relative_path=_relative_path(cloud_node.path, job.source_directory_path),
-            classification=SourceClassification.MEDIA,
-            filter_reason="SUPPORTED_MEDIA",
-            group_key=group_key,
-            is_ignored=parsed.is_ignored,
-        )
-        session.add(source_item)
-        await session.flush()
         if parsed.is_ignored:
-            session.add(_ignored_match(source_item))
             return MatchDecision.IGNORED
 
         cached_recognition = recognition_cache.get(group_key)
         if cached_recognition is None:
-            parsed = await self._ai_service.recognize(
-                filename=cloud_node.name,
-                parent_path=_relative_path(parent_path, job.source_directory_path),
-                parsed=parsed,
+            resolution = await self._metadata_resolver.resolve(
+                MetadataResolutionRequest(
+                    filename=cloud_node.name,
+                    parent_path=_relative_path(
+                        parent_path,
+                        job.source_directory_path,
+                    ),
+                    parsed=parsed,
+                )
             )
+            parsed = resolution.parsed
             recognition_cache[group_key] = parsed
+            candidates = list(resolution.candidates)
+            candidate_cache[group_key] = candidates
         else:
             parsed = _merge_group_context(parsed, cached_recognition)
         cached_candidates = candidate_cache.get(group_key)
         if cached_candidates is None:
-            try:
-                candidates = await self._tmdb_service.search(parsed)
-            except MetadataServiceError:
-                candidates = []
-                parsed = _append_reason(parsed, "TMDB_FAILED")
-            else:
-                if not candidates:
-                    parsed = _append_reason(parsed, "TMDB_NO_RESULTS")
-            candidate_cache[group_key] = list(candidates)
+            resolution = await self._metadata_resolver.resolve(
+                MetadataResolutionRequest(
+                    filename=cloud_node.name,
+                    parent_path=_relative_path(
+                        parent_path,
+                        job.source_directory_path,
+                    ),
+                    parsed=parsed,
+                )
+            )
+            parsed = resolution.parsed
+            candidates = list(resolution.candidates)
+            recognition_cache[group_key] = parsed
+            candidate_cache[group_key] = candidates
         else:
             candidates = list(cached_candidates)
         decision, confidence = decide_match(
@@ -423,6 +436,8 @@ class ScanWorkflow:
             auto_threshold=auto_threshold,
             review_threshold=review_threshold,
         )
+        if candidates and "AI_MANUAL_CONFIRMATION_REQUIRED" in parsed.reason_codes:
+            decision = MatchDecision.REVIEW
         top_candidate = candidates[0] if candidates else None
         entity = (
             await persist_metadata_candidate(session, top_candidate) if top_candidate else None
@@ -459,30 +474,28 @@ class ScanWorkflow:
             if top_candidate
             else ""
         )
-        media_match = MediaMatch(
-                source_item_id=source_item.id,
-                media_entity_id=entity.id if entity else None,
-                media_type=parsed.media_type,
-                parsed_title=parsed.title,
-                parsed_year=parsed.year,
-                season_number=parsed.season_number,
-                episode_numbers=list(parsed.episode_numbers),
-                edition=parsed.edition,
-                confidence=confidence,
-                decision=decision,
-                candidates=[candidate_to_dict(candidate) for candidate in candidates],
-                target_path=target_path,
-                reason_codes=list(parsed.reason_codes),
-                group_key=group_key,
-                episode_title=episode_title,
-                episode_date=parsed.episode_date,
-                release_info={
-                    "quality_tags": list(parsed.quality_tags),
-                    "release_group": parsed.release_group,
-                    "part_number": parsed.part_number,
-                },
-            )
-        session.add(media_match)
+        media_match.media_entity_id = entity.id if entity else None
+        media_match.media_type = parsed.media_type
+        media_match.parsed_title = parsed.title
+        media_match.parsed_year = parsed.year
+        media_match.season_number = parsed.season_number
+        media_match.episode_numbers = list(parsed.episode_numbers)
+        media_match.edition = parsed.edition
+        media_match.confidence = confidence
+        media_match.decision = decision
+        media_match.candidates = [
+            candidate_to_dict(candidate) for candidate in candidates
+        ]
+        media_match.target_path = target_path
+        media_match.reason_codes = list(parsed.reason_codes)
+        media_match.group_key = group_key
+        media_match.episode_title = episode_title
+        media_match.episode_date = parsed.episode_date
+        media_match.release_info = {
+            "quality_tags": list(parsed.quality_tags),
+            "release_group": parsed.release_group,
+            "part_number": parsed.part_number,
+        }
         await session.flush()
         session.add_all(
             [
@@ -612,15 +625,62 @@ def _summarize_decisions(
     return approved, review, 0
 
 
-def _ignored_match(source_item: SourceItem) -> MediaMatch:
-    return MediaMatch(
-        source_item_id=source_item.id,
-        media_type=MediaType.UNKNOWN,
-        parsed_title="",
-        confidence=0,
-        decision=MatchDecision.IGNORED,
-        reason_codes=["IGNORED_SAMPLE"],
+def _should_commit_metadata_batch(
+    item_number: int,
+    total_items: int,
+) -> bool:
+    return (
+        item_number % METADATA_COMMIT_BATCH_SIZE == 0
+        or item_number == total_items
     )
+
+
+def _update_metadata_progress(
+    job: OrganizeJob,
+    decisions: list[MatchDecision],
+    identified_items: int,
+    total_items: int,
+) -> None:
+    (
+        job.approved_items,
+        job.review_items,
+        job.failed_items,
+    ) = _summarize_decisions(decisions)
+    progress_ratio = identified_items / total_items if total_items else 1
+    progress_span = (
+        METADATA_COMPLETE_PROGRESS - RULE_PARSE_COMPLETE_PROGRESS
+    )
+    job.progress = (
+        RULE_PARSE_COMPLETE_PROGRESS + progress_span * progress_ratio
+    )
+    job.current_stage = (
+        f"元数据识别 {identified_items}/{total_items}"
+    )
+
+
+async def _is_cancel_requested(
+    session: AsyncSession, job_id: str
+) -> bool:
+    is_cancel_requested = await session.scalar(
+        select(OrganizeJob.is_cancel_requested).where(OrganizeJob.id == job_id)
+    )
+    return bool(is_cancel_requested)
+
+
+async def _cancel_scan(
+    session: AsyncSession, job: OrganizeJob
+) -> None:
+    job.status = JobStatus.CANCELED
+    job.current_stage = "扫描已取消"
+    session.add(
+        AuditEvent(
+            job_id=job.id,
+            event_type="JOB_CANCELED",
+            message="扫描任务已安全停止，未执行云端写操作",
+            severity="warning",
+        )
+    )
+    await session.commit()
 
 
 def _media_signature(parsed: ParsedMediaName) -> tuple[object, ...]:
@@ -718,25 +778,6 @@ def _merge_group_context(
         edition=parsed.edition,
         confidence=max(parsed.confidence, group_recognition.confidence),
         reason_codes=reason_codes,
-        is_ignored=parsed.is_ignored,
-        episode_date=parsed.episode_date,
-        quality_tags=parsed.quality_tags,
-        release_group=parsed.release_group,
-        part_number=parsed.part_number,
-        context_group=parsed.context_group,
-    )
-
-
-def _append_reason(parsed: ParsedMediaName, reason: str) -> ParsedMediaName:
-    return ParsedMediaName(
-        media_type=parsed.media_type,
-        title=parsed.title,
-        year=parsed.year,
-        season_number=parsed.season_number,
-        episode_numbers=parsed.episode_numbers,
-        edition=parsed.edition,
-        confidence=parsed.confidence,
-        reason_codes=(*parsed.reason_codes, reason),
         is_ignored=parsed.is_ignored,
         episode_date=parsed.episode_date,
         quality_tags=parsed.quality_tags,

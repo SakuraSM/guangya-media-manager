@@ -12,6 +12,7 @@ from app.domain import (
 )
 from app.models import AuditEvent, FileOperation, MediaMatch, OrganizeJob, SourceItem
 from app.providers.base import CloudNode, CloudProvider
+from app.services.metadata import TmdbService
 from app.services.naming import build_subtitle_filename
 from app.services.organizer_assets import AssetScraper
 from app.services.organizer_cloud import (
@@ -36,11 +37,12 @@ class ExecutionWorkflow:
         self,
         session_factory: async_sessionmaker[AsyncSession],
         provider: CloudProvider,
+        tmdb_service: TmdbService,
     ) -> None:
         self._session_factory = session_factory
         self._provider = provider
         self._layout = CloudLayout(provider)
-        self._asset_scraper = AssetScraper(provider)
+        self._asset_scraper = AssetScraper(provider, tmdb_service)
         self._copy_executor = CopyExecutor(provider)
 
     async def run(self, job_id: str) -> None:
@@ -53,6 +55,9 @@ class ExecutionWorkflow:
                 raise OrganizerError("No approved media matches")
             await self._begin_copy(session, job, len(matches))
             try:
+                if await _is_cancel_requested(session, job.id):
+                    await self._cancel_job(session, job)
+                    return
                 staging_directory = await self._layout.prepare_staging(job)
                 media_directories = await self._layout.prepare_media_directories(
                     staging_directory, matches
@@ -66,12 +71,18 @@ class ExecutionWorkflow:
                         item_index=item_index,
                         total_items=len(matches),
                     )
-                    if job.is_cancel_requested:
+                    if await _is_cancel_requested(session, job.id):
                         await self._cancel_job(session, job)
                         return
+                if await _is_cancel_requested(session, job.id):
+                    await self._cancel_job(session, job)
+                    return
                 warning_count = await self._scrape_metadata(
                     session, job, matches, media_directories
                 )
+                if await _is_cancel_requested(session, job.id):
+                    await self._cancel_job(session, job)
+                    return
                 await self._finalize_job(
                     session, job, staging_directory, warning_count
                 )
@@ -255,3 +266,12 @@ class ExecutionWorkflow:
             )
         )
         return list((await session.scalars(statement)).all())
+
+
+async def _is_cancel_requested(
+    session: AsyncSession, job_id: str
+) -> bool:
+    is_cancel_requested = await session.scalar(
+        select(OrganizeJob.is_cancel_requested).where(OrganizeJob.id == job_id)
+    )
+    return bool(is_cancel_requested)
