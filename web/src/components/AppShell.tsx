@@ -1,5 +1,4 @@
 import {
-  Bird,
   Clapperboard,
   FolderKanban,
   LayoutDashboard,
@@ -101,9 +100,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Sidebar collapsible="icon" className="border-sidebar-border">
         <SidebarHeader className="px-3 py-4">
           <div className="flex min-w-0 items-center gap-3">
-            <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground shadow-xs">
-              <Bird aria-hidden="true" />
-            </span>
+            <img
+              src="/logo.png"
+              alt=""
+              className="size-9 shrink-0 rounded-xl object-cover shadow-xs"
+              aria-hidden="true"
+            />
             <span className="min-w-0 group-data-[collapsible=icon]:hidden">
               <strong className="block truncate text-sm font-semibold tracking-tight">
                 光鸭媒体管家

@@ -1,6 +1,20 @@
-# 光鸭媒体管家
+<p align="center">
+  <img src="./docs/assets/logo.png" width="112" alt="光鸭媒体管家 Logo">
+</p>
 
-面向个人 NAS 的单用户影视整理系统。通过第三方 `guangyapan` 包连接光鸭云盘，提供扫码授权、自动续期、递归扫描、规则/AI 识别、TMDB 审核、云内复制、字幕关联、NFO 与图片刮削、媒体库和实时任务看板。
+<h1 align="center">光鸭媒体管家</h1>
+
+<p align="center">
+  面向个人 NAS 的光鸭云盘影视识别、整理与刮削工具
+</p>
+
+<p align="center">
+  <img src="./docs/assets/demo-dashboard.png" alt="光鸭媒体管家 Demo 看板">
+</p>
+
+> Demo 图用于展示产品布局与视觉风格，实际数据以部署后的云盘账号和整理任务为准。
+
+通过第三方 `guangyapan` 包连接光鸭云盘，提供扫码授权、自动续期、递归扫描、规则/AI 识别、TMDB 审核、云内复制、字幕关联、NFO 与图片刮削、媒体库和实时任务看板。
 
 > 光鸭云盘没有公开、稳定的开发者 API。真实云盘能力由独立 `GuangyaProvider` 隔离，接口变化时可单独调整适配器。建议先在 `DEMO_MODE=true` 下完整验收。
 
