@@ -242,7 +242,7 @@ export function ReviewPage() {
   }
 
   return (
-    <div className="review-page">
+    <div className="flex min-h-0 flex-col gap-3 lg:h-[calc(100svh-7rem)] lg:overflow-hidden">
       <ReviewPageHeader
         jobs={jobsQuery.data}
         job={job}
@@ -273,6 +273,7 @@ export function ReviewPage() {
           sourceItemMutation.mutate({ itemId, action })
         }
       />
+      {mutationError ? <ErrorNotice message={mutationError.message} /> : null}
       <ReviewWorkspace
         matchGroups={matchGroups}
         matchPage={matchPage}
@@ -299,7 +300,6 @@ export function ReviewPage() {
         onPageChange={handlePageChange}
         onPageSizeChange={handlePageSizeChange}
       />
-      {mutationError ? <ErrorNotice message={mutationError.message} /> : null}
     </div>
   )
 }

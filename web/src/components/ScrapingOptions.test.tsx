@@ -38,14 +38,10 @@ describe('ScrapingOptions', () => {
       />,
     )
 
-    fireEvent.change(
-      screen.getByLabelText('TMDB 元数据语言'),
-      { target: { value: 'en-US' } },
-    )
-    fireEvent.change(
-      screen.getByLabelText('TMDB 图片质量'),
-      { target: { value: 'ORIGINAL' } },
-    )
+    fireEvent.click(screen.getByLabelText('TMDB 元数据语言'))
+    fireEvent.click(screen.getByRole('option', { name: 'English' }))
+    fireEvent.click(screen.getByLabelText('TMDB 图片质量'))
+    fireEvent.click(screen.getByRole('option', { name: '原图（更清晰）' }))
 
     expect(handleChange).toHaveBeenNthCalledWith(1, {
       scrape_metadata_language: 'en-US',

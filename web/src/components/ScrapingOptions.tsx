@@ -1,5 +1,23 @@
-import { Check } from 'lucide-react'
-import type { CreateJobInput } from '../types'
+import type { CreateJobInput } from '@/types'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+  FieldTitle,
+} from '@/components/ui/field'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 type JobScrapingConfig = CreateJobInput['config']
 
@@ -32,82 +50,78 @@ const SCRAPING_CHECKBOXES: ReadonlyArray<{
   { name: 'rename_subtitles', label: '重命名字幕' },
 ]
 
-export function ScrapingOptions({
-  config,
-  onChange,
-}: ScrapingOptionsProps) {
-  const handleCheckboxChange = (
-    event: React.ChangeEvent<HTMLInputElement>,
-  ) => {
-    onChange({
-      [event.target.name]: event.target.checked,
-    })
-  }
-  const handleLanguageChange = (
-    event: React.ChangeEvent<HTMLSelectElement>,
-  ) => {
-    onChange({
-      scrape_metadata_language:
-        event.target.value as JobScrapingConfig['scrape_metadata_language'],
-    })
-  }
-  const handleImageQualityChange = (
-    event: React.ChangeEvent<HTMLSelectElement>,
-  ) => {
-    onChange({
-      scrape_image_quality:
-        event.target.value as JobScrapingConfig['scrape_image_quality'],
-    })
-  }
-
+export function ScrapingOptions({ config, onChange }: ScrapingOptionsProps) {
   return (
-    <fieldset className="option-fieldset scraping-options">
-      <legend>刮削与兼容选项</legend>
-      <div className="scraping-select-grid">
-        <label className="field" htmlFor="scrape-metadata-language">
-          <span>TMDB 元数据语言</span>
-          <select
-            id="scrape-metadata-language"
+    <FieldSet className="rounded-xl border bg-muted/20 p-4">
+      <FieldLegend>刮削与兼容选项</FieldLegend>
+      <FieldGroup className="grid gap-4 sm:grid-cols-2">
+        <Field>
+          <FieldLabel htmlFor="scrape-metadata-language">TMDB 元数据语言</FieldLabel>
+          <Select
             value={config.scrape_metadata_language}
-            onChange={handleLanguageChange}
+            onValueChange={(value) =>
+              onChange({
+                scrape_metadata_language:
+                  value as JobScrapingConfig['scrape_metadata_language'],
+              })
+            }
           >
-            <option value="zh-CN">简体中文</option>
-            <option value="en-US">English</option>
-            <option value="ja-JP">日本語</option>
-            <option value="ko-KR">한국어</option>
-          </select>
-        </label>
-        <label className="field" htmlFor="scrape-image-quality">
-          <span>TMDB 图片质量</span>
-          <select
-            id="scrape-image-quality"
+            <SelectTrigger id="scrape-metadata-language" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="zh-CN">简体中文</SelectItem>
+                <SelectItem value="en-US">English</SelectItem>
+                <SelectItem value="ja-JP">日本語</SelectItem>
+                <SelectItem value="ko-KR">한국어</SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="scrape-image-quality">TMDB 图片质量</FieldLabel>
+          <Select
             value={config.scrape_image_quality}
-            onChange={handleImageQualityChange}
+            onValueChange={(value) =>
+              onChange({
+                scrape_image_quality:
+                  value as JobScrapingConfig['scrape_image_quality'],
+              })
+            }
           >
-            <option value="STANDARD">标准图（节省流量）</option>
-            <option value="ORIGINAL">原图（更清晰）</option>
-          </select>
-        </label>
-      </div>
-      <div className="option-row">
+            <SelectTrigger id="scrape-image-quality" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="STANDARD">标准图（节省流量）</SelectItem>
+                <SelectItem value="ORIGINAL">原图（更清晰）</SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </Field>
+      </FieldGroup>
+      <div data-slot="checkbox-group" className="grid gap-2 sm:grid-cols-2">
         {SCRAPING_CHECKBOXES.map(({ name, label }) => (
-          <label className="checkbox-label" key={name}>
-            <input
-              type="checkbox"
+          <Field key={name} orientation="horizontal">
+            <Checkbox
+              id={`scrape-${name}`}
               name={name}
               checked={config[name]}
-              onChange={handleCheckboxChange}
+              onCheckedChange={(checked) => onChange({ [name]: checked === true })}
             />
-            <span className="custom-checkbox" aria-hidden="true">
-              <Check size={12} />
-            </span>
-            {label}
-          </label>
+            <FieldLabel htmlFor={`scrape-${name}`}>
+              <FieldContent>
+                <FieldTitle>{label}</FieldTitle>
+              </FieldContent>
+            </FieldLabel>
+          </Field>
         ))}
       </div>
-      <p className="field-help">
+      <FieldDescription>
         默认采用“仅生成缺失资产”的安全语义；暂存区不覆盖正式媒体库中的同名文件。
-      </p>
-    </fieldset>
+      </FieldDescription>
+    </FieldSet>
   )
 }

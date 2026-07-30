@@ -1,10 +1,18 @@
 import { useCallback, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckCircle2, Cloud, DatabaseZap, KeyRound, Save, ShieldCheck } from 'lucide-react'
-import { api } from '../api/client'
-import { CloudLoginDialog } from '../components/CloudLoginDialog'
-import { ErrorNotice } from '../components/ErrorNotice'
-import { LoadingScreen } from '../components/LoadingScreen'
+import { toast } from 'sonner'
+import { api } from '@/api/client'
+import { CloudLoginDialog } from '@/components/CloudLoginDialog'
+import { ErrorNotice } from '@/components/ErrorNotice'
+import { LoadingScreen } from '@/components/LoadingScreen'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group'
 
 interface SettingsFormState {
   tmdb_api_token: string
@@ -33,6 +41,7 @@ export function SettingsPage() {
         current ? { ...current, tmdb_api_token: '', ai_api_key: '' } : current,
       )
       await queryClient.invalidateQueries({ queryKey: ['settings'] })
+      toast.success('设置已安全保存')
     },
   })
 
@@ -40,6 +49,7 @@ export function SettingsPage() {
   const handleCloudConnected = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ['cloud-account'] })
     void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    toast.success('光鸭云盘授权成功')
   }, [queryClient])
 
   if (settingsQuery.isPending || accountQuery.isPending) {
@@ -65,118 +75,138 @@ export function SettingsPage() {
     event.preventDefault()
     updateMutation.mutate(buildSettingsPayload(formValues))
   }
-  return (
-    <div className="settings-layout">
-      <section className="settings-section">
-        <div className="settings-title">
-          <Cloud size={21} aria-hidden="true" />
-          <div>
-            <h2>光鸭账号</h2>
-            <p>首次扫码后保存加密 refresh token，后续自动续期。</p>
-          </div>
-        </div>
-        <div className="connection-row">
-          <span className="account-check" aria-hidden="true">
-            <CheckCircle2 size={20} />
-          </span>
-          <div>
-            <strong>{accountQuery.data.account?.display_name ?? '尚未连接账号'}</strong>
-            <span>{accountQuery.data.account ? '账号已连接' : '需要扫码登录'}</span>
-          </div>
-          <button
-            className="button button-secondary"
-            type="button"
-            onClick={() => setShowCloudLogin(true)}
-          >
-            重新授权
-          </button>
-        </div>
-      </section>
 
-      <form className="settings-section" onSubmit={handleSubmit}>
-        <div className="settings-title">
-          <DatabaseZap size={21} aria-hidden="true" />
-          <div>
-            <h2>元数据与智能识别</h2>
-            <p>密钥只在后端加密保存，前端不会回显。</p>
-          </div>
-        </div>
-        <div className="settings-grid">
-          <label className="field" htmlFor="tmdb-token">
-            <span>TMDB v3 API Key / v4 读取令牌</span>
-            <div className="input-with-icon">
-              <KeyRound size={16} aria-hidden="true" />
-              <input
-                id="tmdb-token"
-                name="tmdb_api_token"
-                type="password"
-                autoComplete="off"
-                value={formValues.tmdb_api_token}
-                onChange={handleChange}
-                placeholder={settingsQuery.data.tmdb_configured ? '已配置 · 输入新值可替换' : '输入 Token'}
-              />
+  const account = accountQuery.data.account
+
+  return (
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
+      <Card>
+        <CardHeader>
+          <span className="mb-1 grid size-9 place-items-center rounded-xl bg-accent text-accent-foreground">
+            <Cloud aria-hidden="true" />
+          </span>
+          <CardTitle>光鸭账号</CardTitle>
+          <CardDescription>
+            首次扫码后保存加密 refresh token，后续自动续期。
+          </CardDescription>
+          <CardAction>
+            <Button variant="outline" type="button" onClick={() => setShowCloudLogin(true)}>
+              重新授权
+            </Button>
+          </CardAction>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-3 rounded-xl border bg-muted/30 p-4">
+            <span className="grid size-10 place-items-center rounded-full bg-success/10 text-success">
+              <CheckCircle2 aria-hidden="true" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <strong className="block truncate font-medium">
+                {account?.display_name ?? '尚未连接账号'}
+              </strong>
+              <span className="text-sm text-muted-foreground">
+                {account ? '账号已连接' : '需要扫码登录'}
+              </span>
             </div>
-          </label>
-          <label className="field" htmlFor="ai-key">
-            <span>AI API Key</span>
-            <div className="input-with-icon">
-              <KeyRound size={16} aria-hidden="true" />
-              <input
-                id="ai-key"
-                name="ai_api_key"
-                type="password"
-                autoComplete="off"
-                value={formValues.ai_api_key}
-                onChange={handleChange}
-                placeholder={settingsQuery.data.ai_configured ? '已配置 · 输入新值可替换' : '输入 API Key'}
-              />
-            </div>
-          </label>
-          <label className="field" htmlFor="ai-base-url">
-            <span>兼容 OpenAI API 地址</span>
-            <input
-              id="ai-base-url"
-              name="ai_base_url"
-              type="url"
-              value={formValues.ai_base_url}
-              onChange={handleChange}
-            />
-          </label>
-          <label className="field" htmlFor="ai-model">
-            <span>模型</span>
-            <input
-              id="ai-model"
-              name="ai_model"
-              type="text"
-              value={formValues.ai_model}
-              onChange={handleChange}
-            />
-          </label>
-        </div>
-        <div className="safe-operation-note">
-          <ShieldCheck size={19} aria-hidden="true" />
-          <div>
-            <strong>隐私说明</strong>
-            <span>只有低置信度文件名和父目录名会发送给 AI，不上传媒体内容。</span>
+            <Badge variant="outline">
+              {account ? account.status : '未连接'}
+            </Badge>
           </div>
-        </div>
-        {updateMutation.isError ? <ErrorNotice message={updateMutation.error.message} /> : null}
-        <div className="panel-actions">
-          <button className="button button-primary" type="submit">
-            <Save size={16} aria-hidden="true" />
-            {updateMutation.isPending ? '正在保存…' : '保存设置'}
-          </button>
-        </div>
+        </CardContent>
+      </Card>
+
+      <form onSubmit={handleSubmit}>
+        <Card>
+          <CardHeader>
+            <span className="mb-1 grid size-9 place-items-center rounded-xl bg-accent text-accent-foreground">
+              <DatabaseZap aria-hidden="true" />
+            </span>
+            <CardTitle>元数据与智能识别</CardTitle>
+            <CardDescription>密钥只在后端加密保存，前端不会回显。</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-5">
+            <FieldGroup className="grid gap-5 md:grid-cols-2">
+              <Field>
+                <FieldLabel htmlFor="tmdb-token">TMDB v3 API Key / v4 读取令牌</FieldLabel>
+                <InputGroup>
+                  <InputGroupAddon>
+                    <KeyRound aria-hidden="true" />
+                  </InputGroupAddon>
+                  <InputGroupInput
+                    id="tmdb-token"
+                    name="tmdb_api_token"
+                    type="password"
+                    autoComplete="off"
+                    value={formValues.tmdb_api_token}
+                    onChange={handleChange}
+                    placeholder={settingsQuery.data.tmdb_configured ? '已配置 · 输入新值可替换' : '输入 Token'}
+                  />
+                </InputGroup>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="ai-key">AI API Key</FieldLabel>
+                <InputGroup>
+                  <InputGroupAddon>
+                    <KeyRound aria-hidden="true" />
+                  </InputGroupAddon>
+                  <InputGroupInput
+                    id="ai-key"
+                    name="ai_api_key"
+                    type="password"
+                    autoComplete="off"
+                    value={formValues.ai_api_key}
+                    onChange={handleChange}
+                    placeholder={settingsQuery.data.ai_configured ? '已配置 · 输入新值可替换' : '输入 API Key'}
+                  />
+                </InputGroup>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="ai-base-url">兼容 OpenAI API 地址</FieldLabel>
+                <Input
+                  id="ai-base-url"
+                  name="ai_base_url"
+                  type="url"
+                  value={formValues.ai_base_url}
+                  onChange={handleChange}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="ai-model">模型</FieldLabel>
+                <Input
+                  id="ai-model"
+                  name="ai_model"
+                  type="text"
+                  value={formValues.ai_model}
+                  onChange={handleChange}
+                />
+              </Field>
+            </FieldGroup>
+            <Alert>
+              <ShieldCheck aria-hidden="true" />
+              <AlertTitle>隐私说明</AlertTitle>
+              <AlertDescription>
+                只有低置信度文件名和父目录名会发送给 AI，不上传媒体内容。
+              </AlertDescription>
+            </Alert>
+            {updateMutation.isError ? <ErrorNotice message={updateMutation.error.message} /> : null}
+            <div className="flex justify-end">
+              <Button type="submit" disabled={updateMutation.isPending}>
+                <Save data-icon="inline-start" aria-hidden="true" />
+                {updateMutation.isPending ? '正在保存…' : '保存设置'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </form>
 
       {settingsQuery.data.demo_mode ? (
-        <section className="demo-banner">
-          <ShieldCheck size={19} aria-hidden="true" />
-          <div>
-            <strong>演示模式已启用</strong>
-            <span>当前所有云盘写操作均为模拟执行，关闭 DEMO_MODE 后才会调用真实光鸭接口。</span>
-          </div>
-        </section>
+        <Alert>
+          <ShieldCheck aria-hidden="true" />
+          <AlertTitle>演示模式已启用</AlertTitle>
+          <AlertDescription>
+            当前所有云盘写操作均为模拟执行，关闭 DEMO_MODE 后才会调用真实光鸭接口。
+          </AlertDescription>
+        </Alert>
       ) : null}
       <CloudLoginDialog
         open={showCloudLogin}

@@ -1,9 +1,7 @@
-import { AlertTriangle } from 'lucide-react'
-import type { MediaMatch } from '../types'
-import {
-  isMetadataPending,
-  matchRecognitionMessages,
-} from '../utils/matchFailureReasons'
+import { AlertTriangle, LoaderCircle } from 'lucide-react'
+import type { MediaMatch } from '@/types'
+import { isMetadataPending, matchRecognitionMessages } from '@/utils/matchFailureReasons'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 
 interface RecognitionNoticeProps {
   mediaMatch: MediaMatch
@@ -15,21 +13,18 @@ export function RecognitionNotice({ mediaMatch }: RecognitionNoticeProps) {
   const isPending = isMetadataPending(mediaMatch)
 
   return (
-    <section
-      className={`recognition-notice${isPending ? ' recognition-pending' : ''}`}
-      aria-labelledby="recognition-notice-title"
-    >
-      <div>
-        <AlertTriangle size={16} aria-hidden="true" />
-        <h3 id="recognition-notice-title">
-          {isPending ? '识别进度' : '识别说明与失败原因'}
-        </h3>
-      </div>
-      <ul>
-        {messages.map((message) => (
-          <li key={message}>{message}</li>
-        ))}
-      </ul>
-    </section>
+    <Alert variant={isPending ? 'default' : 'destructive'}>
+      {isPending ? (
+        <LoaderCircle className="animate-spin" aria-hidden="true" />
+      ) : (
+        <AlertTriangle aria-hidden="true" />
+      )}
+      <AlertTitle>{isPending ? '识别进度' : '识别说明与失败原因'}</AlertTitle>
+      <AlertDescription>
+        <ul className="flex list-disc flex-col gap-1 pl-4">
+          {messages.map((message) => <li key={message}>{message}</li>)}
+        </ul>
+      </AlertDescription>
+    </Alert>
   )
 }

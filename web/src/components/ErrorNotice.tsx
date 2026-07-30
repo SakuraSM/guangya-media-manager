@@ -1,4 +1,5 @@
 import { AlertTriangle } from 'lucide-react'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 
 interface ErrorNoticeProps {
   message: string
@@ -6,9 +7,10 @@ interface ErrorNoticeProps {
 
 export function ErrorNotice({ message }: ErrorNoticeProps) {
   return (
-    <div className="error-notice" role="alert">
-      <AlertTriangle size={18} aria-hidden="true" />
-      <span>{message}</span>
-    </div>
+    <Alert variant="destructive">
+      <AlertTriangle aria-hidden="true" />
+      <AlertTitle>操作未完成</AlertTitle>
+      <AlertDescription>{message}</AlertDescription>
+    </Alert>
   )
 }

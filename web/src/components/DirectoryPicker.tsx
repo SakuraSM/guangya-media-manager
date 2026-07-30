@@ -1,9 +1,21 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronLeft, ChevronRight, Folder, X } from 'lucide-react'
-import { api } from '../api/client'
-import type { CloudDirectory } from '../types'
-import { ErrorNotice } from './ErrorNotice'
+import { ChevronLeft, ChevronRight, Folder } from 'lucide-react'
+import { api } from '@/api/client'
+import type { CloudDirectory } from '@/types'
+import { ErrorNotice } from '@/components/ErrorNotice'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
+import { Field, FieldLabel } from '@/components/ui/field'
+import { ScrollArea } from '@/components/ui/scroll-area'
 
 interface DirectoryPickerProps {
   id: string
@@ -18,13 +30,7 @@ const CLOUD_ROOT = {
   name: '光鸭云盘',
 }
 
-export function DirectoryPicker({
-  id,
-  label,
-  value,
-  onSelect,
-}: DirectoryPickerProps) {
-  const dialogRef = useRef<HTMLDialogElement>(null)
+export function DirectoryPicker({ id, label, value, onSelect }: DirectoryPickerProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [pathStack, setPathStack] = useState([CLOUD_ROOT])
   const current = pathStack[pathStack.length - 1] ?? CLOUD_ROOT
@@ -34,14 +40,9 @@ export function DirectoryPicker({
     enabled: isOpen,
   })
 
-  const openDialog = () => {
-    setPathStack([CLOUD_ROOT])
-    setIsOpen(true)
-    dialogRef.current?.showModal()
-  }
-  const closeDialog = () => {
-    setIsOpen(false)
-    dialogRef.current?.close()
+  const handleOpenChange = (open: boolean) => {
+    if (open) setPathStack([CLOUD_ROOT])
+    setIsOpen(open)
   }
   const enterDirectory = (directory: CloudDirectory) => {
     setPathStack((stack) => [
@@ -51,96 +52,111 @@ export function DirectoryPicker({
   }
   const chooseDirectory = (directory: CloudDirectory) => {
     onSelect(directory)
-    closeDialog()
+    setIsOpen(false)
   }
 
   return (
-    <div className="field directory-picker-field">
-      <span id={`${id}-label`}>{label}</span>
-      <button
-        className="directory-picker-trigger"
-        type="button"
-        aria-labelledby={`${id}-label`}
-        onClick={openDialog}
-      >
-        <Folder size={17} aria-hidden="true" />
-        <span>{value?.path ?? '请选择光鸭目录'}</span>
-        <ChevronRight size={16} aria-hidden="true" />
-      </button>
-      <dialog
-        ref={dialogRef}
-        className="directory-dialog"
-        aria-labelledby={`${id}-dialog-title`}
-        onClose={() => setIsOpen(false)}
-      >
-        <div className="directory-dialog-heading">
-          <div>
-            <span className="eyebrow">{label}</span>
-            <h2 id={`${id}-dialog-title`}>浏览云盘目录</h2>
+    <Field>
+      <FieldLabel id={`${id}-label`}>{label}</FieldLabel>
+      <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+        <DialogTrigger asChild>
+          <Button
+            variant="outline"
+            type="button"
+            className="h-10 w-full justify-start px-3 font-normal"
+            aria-labelledby={`${id}-label`}
+          >
+            <Folder data-icon="inline-start" aria-hidden="true" />
+            <span className="min-w-0 flex-1 truncate text-left">
+              {value?.path ?? '请选择光鸭目录'}
+            </span>
+            <ChevronRight data-icon="inline-end" aria-hidden="true" />
+          </Button>
+        </DialogTrigger>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>浏览云盘目录</DialogTitle>
+            <DialogDescription>为“{label}”选择一个光鸭云盘目录。</DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-2 rounded-lg border bg-muted/40 p-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={pathStack.length === 1}
+              onClick={() => setPathStack((stack) => stack.slice(0, -1))}
+            >
+              <ChevronLeft data-icon="inline-start" aria-hidden="true" />
+              返回
+            </Button>
+            <code className="min-w-0 flex-1 truncate text-xs" title={current.path}>
+              {current.path}
+            </code>
           </div>
-          <button className="dialog-close" type="button" onClick={closeDialog} aria-label="关闭">
-            <X size={18} aria-hidden="true" />
-          </button>
-        </div>
-        <div className="directory-breadcrumb">
-          <button
-            type="button"
-            disabled={pathStack.length === 1}
-            onClick={() => setPathStack((stack) => stack.slice(0, -1))}
-          >
-            <ChevronLeft size={16} aria-hidden="true" />
-            返回
-          </button>
-          <code>{current.path}</code>
-        </div>
-        {directoriesQuery.isError ? (
-          <ErrorNotice message={directoriesQuery.error.message} />
-        ) : null}
-        <div className="directory-list" aria-live="polite">
-          {directoriesQuery.isPending ? (
-            <span className="directory-empty">正在读取目录…</span>
+          {directoriesQuery.isError ? (
+            <ErrorNotice message={directoriesQuery.error.message} />
           ) : null}
-          {directoriesQuery.data?.map((directory) => (
-            <div className="directory-row" key={directory.id}>
-              <button type="button" onClick={() => enterDirectory(directory)}>
-                <Folder size={17} aria-hidden="true" />
-                <span>
-                  <strong>{directory.name}</strong>
-                  <small>{directory.item_count} 个项目</small>
-                </span>
-                <ChevronRight size={16} aria-hidden="true" />
-              </button>
-              <button
-                className="button button-secondary"
-                type="button"
-                onClick={() => chooseDirectory(directory)}
-              >
-                选择
-              </button>
+          <ScrollArea className="h-72 rounded-lg border">
+            <div className="flex flex-col divide-y">
+              {directoriesQuery.isPending ? (
+                <p className="p-6 text-center text-sm text-muted-foreground">
+                  正在读取目录…
+                </p>
+              ) : null}
+              {directoriesQuery.data?.map((directory) => (
+                <div className="flex items-center gap-2 p-2" key={directory.id}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-auto min-w-0 flex-1 justify-start py-2"
+                    onClick={() => enterDirectory(directory)}
+                  >
+                    <Folder data-icon="inline-start" aria-hidden="true" />
+                    <span className="min-w-0 flex-1 text-left">
+                      <strong className="block truncate font-medium">{directory.name}</strong>
+                      <small className="block text-xs text-muted-foreground">
+                        {directory.item_count} 个项目
+                      </small>
+                    </span>
+                    <ChevronRight data-icon="inline-end" aria-hidden="true" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    type="button"
+                    onClick={() => chooseDirectory(directory)}
+                  >
+                    选择
+                  </Button>
+                </div>
+              ))}
+              {!directoriesQuery.isPending && !directoriesQuery.data?.length ? (
+                <p className="p-6 text-center text-sm text-muted-foreground">
+                  这个目录下没有子目录
+                </p>
+              ) : null}
             </div>
-          ))}
-          {!directoriesQuery.isPending && !directoriesQuery.data?.length ? (
-            <span className="directory-empty">这个目录下没有子目录</span>
-          ) : null}
-        </div>
-        {current.id ? (
-          <button
-            className="button button-primary button-full"
-            type="button"
-            onClick={() =>
-              chooseDirectory({
-                id: current.id,
-                parent_id: '',
-                name: current.name,
-                path: current.path,
-                item_count: 0,
-              })
-            }
-          >
-            选择当前目录
-          </button>
-        ) : null}
-      </dialog>
-    </div>
+          </ScrollArea>
+          <DialogFooter>
+            {current.id ? (
+              <Button
+                type="button"
+                onClick={() =>
+                  chooseDirectory({
+                    id: current.id,
+                    parent_id: '',
+                    name: current.name,
+                    path: current.path,
+                    item_count: 0,
+                  })
+                }
+              >
+                选择当前目录
+              </Button>
+            ) : null}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Field>
   )
 }

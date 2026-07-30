@@ -1,5 +1,7 @@
 import { AlertCircle, CheckCircle2, LoaderCircle, PauseCircle } from 'lucide-react'
-import type { JobStatus, MatchDecision } from '../types'
+import type { JobStatus, MatchDecision } from '@/types'
+import { Badge } from '@/components/ui/badge'
+import { cn } from '@/lib/utils'
 
 type SupportedStatus = JobStatus | MatchDecision
 
@@ -29,6 +31,14 @@ const STATUS_REGISTRY: Record<SupportedStatus, StatusDefinition> = {
   UNRESOLVED: { label: '未识别', tone: 'danger', icon: AlertCircle },
 }
 
+const TONE_CLASSES = {
+  success: 'border-success/20 bg-success/10 text-success',
+  warning: 'border-warning/20 bg-warning/10 text-warning',
+  danger: 'border-destructive/20 bg-destructive/10 text-destructive',
+  info: 'border-info/20 bg-info/10 text-info',
+  neutral: 'border-border bg-muted text-muted-foreground',
+} as const
+
 interface StatusBadgeProps {
   status: SupportedStatus
 }
@@ -40,9 +50,9 @@ export function StatusBadge({ status }: StatusBadgeProps) {
     status,
   )
   return (
-    <span className={`status-badge status-${definition.tone}`}>
-      <Icon className={isAnimated ? 'spin' : ''} size={14} aria-hidden="true" />
+    <Badge variant="outline" className={cn('gap-1.5 whitespace-nowrap', TONE_CLASSES[definition.tone])}>
+      <Icon className={isAnimated ? 'animate-spin' : undefined} aria-hidden="true" />
       {definition.label}
-    </span>
+    </Badge>
   )
 }

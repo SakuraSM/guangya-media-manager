@@ -1,5 +1,7 @@
 import type { Job } from '../types'
 import { ReviewCommandBar } from './ReviewCommandBar'
+import { CheckCircle2 } from 'lucide-react'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 interface ReviewPageHeaderProps {
   jobs: Job[]
@@ -41,7 +43,7 @@ export function ReviewPageHeader({
   }
 
   return (
-    <div className="review-page-header">
+    <div className="flex flex-col gap-3">
       <ReviewCommandBar
         jobs={jobs}
         job={job}
@@ -60,9 +62,10 @@ export function ReviewPageHeader({
         onCancel={onCancel}
       />
       {actionMessage ? (
-        <p className="action-success" role="status">
-          {actionMessage}
-        </p>
+        <Alert className="border-success/20 bg-success/5 text-success" role="status">
+          <CheckCircle2 aria-hidden="true" />
+          <AlertDescription className="text-success">{actionMessage}</AlertDescription>
+        </Alert>
       ) : null}
     </div>
   )

@@ -1,7 +1,9 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN npm ci --no-audit --no-fund \
+    && test -x node_modules/.bin/tsc \
+    && test -x node_modules/.bin/vite
 COPY . .
 RUN npm run build
 

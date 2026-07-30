@@ -1,9 +1,18 @@
-import { useEffect, useRef, useState } from 'react'
-import { ExternalLink, LoaderCircle, RefreshCw, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { ExternalLink, LoaderCircle, RefreshCw } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
-import { api } from '../api/client'
-import { MILLISECONDS_PER_SECOND } from '../constants'
-import type { CloudLoginStart } from '../types'
+import { api } from '@/api/client'
+import { MILLISECONDS_PER_SECOND } from '@/constants'
+import type { CloudLoginStart } from '@/types'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 
 interface CloudLoginDialogProps {
   open: boolean
@@ -11,23 +20,11 @@ interface CloudLoginDialogProps {
   onConnected: () => void
 }
 
-export function CloudLoginDialog({
-  open,
-  onClose,
-  onConnected,
-}: CloudLoginDialogProps) {
-  const dialogRef = useRef<HTMLDialogElement>(null)
+export function CloudLoginDialog({ open, onClose, onConnected }: CloudLoginDialogProps) {
   const [challenge, setChallenge] = useState<CloudLoginStart | null>(null)
   const [status, setStatus] = useState<'STARTING' | 'PENDING' | 'ERROR'>('STARTING')
   const [message, setMessage] = useState('正在创建安全登录会话…')
   const [retryCount, setRetryCount] = useState(0)
-
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-    if (open && !dialog.open) dialog.showModal()
-    if (!open && dialog.open) dialog.close()
-  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -60,7 +57,7 @@ export function CloudLoginDialog({
               return
             }
             timer = window.setTimeout(
-              poll,
+              () => void poll(),
               login.poll_interval_seconds * MILLISECONDS_PER_SECOND,
             )
           } catch (error) {
@@ -70,7 +67,7 @@ export function CloudLoginDialog({
           }
         }
         timer = window.setTimeout(
-          poll,
+          () => void poll(),
           login.poll_interval_seconds * MILLISECONDS_PER_SECOND,
         )
       } catch (error) {
@@ -88,64 +85,58 @@ export function CloudLoginDialog({
   }, [open, onClose, onConnected, retryCount])
 
   return (
-    <dialog
-      ref={dialogRef}
-      className="cloud-login-dialog"
-      aria-labelledby="cloud-login-title"
-      onCancel={onClose}
-      onClose={onClose}
-    >
-      <button className="dialog-close" type="button" onClick={onClose} aria-label="关闭">
-        <X size={18} aria-hidden="true" />
-      </button>
-      <div className="dialog-heading">
-        <span className="eyebrow">安全授权</span>
-        <h2 id="cloud-login-title">连接光鸭云盘</h2>
-        <p>扫码只用于获取授权，账号凭证会在服务端加密保存。</p>
-      </div>
-
-      <div className="qr-shell" aria-live="polite">
-        {challenge ? (
-          <QRCodeSVG
-            value={challenge.verification_uri}
-            size={184}
-            bgColor="#ffffff"
-            fgColor="#0b1422"
-            level="M"
-            title="光鸭登录二维码"
-          />
-        ) : (
-          <LoaderCircle className="spin" size={32} aria-hidden="true" />
-        )}
-      </div>
-      <div className={`login-poll-status login-poll-${status.toLowerCase()}`}>
-        {status === 'PENDING' || status === 'STARTING' ? (
-          <LoaderCircle className="spin" size={16} aria-hidden="true" />
-        ) : null}
-        <span>{message}</span>
-      </div>
-
-      {challenge ? (
-        <a
-          className="button button-secondary"
-          href={challenge.verification_uri}
-          target="_blank"
-          rel="noreferrer"
+    <Dialog open={open} onOpenChange={(nextOpen) => (nextOpen ? undefined : onClose())}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>连接光鸭云盘</DialogTitle>
+          <DialogDescription>
+            扫码只用于获取授权，账号凭证会在服务端加密保存。
+          </DialogDescription>
+        </DialogHeader>
+        <div className="mx-auto grid size-56 place-items-center rounded-2xl border bg-white p-4 shadow-xs">
+          {challenge ? (
+            <QRCodeSVG
+              value={challenge.verification_uri}
+              size={184}
+              bgColor="#ffffff"
+              fgColor="#102a2e"
+              level="M"
+              title="光鸭登录二维码"
+            />
+          ) : (
+            <LoaderCircle className="animate-spin text-primary" aria-hidden="true" />
+          )}
+        </div>
+        <div
+          className={
+            status === 'ERROR'
+              ? 'flex items-center justify-center gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive'
+              : 'flex items-center justify-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-accent-foreground'
+          }
+          aria-live="polite"
         >
-          无法扫码？打开授权页面
-          <ExternalLink size={15} aria-hidden="true" />
-        </a>
-      ) : null}
-      {status === 'ERROR' ? (
-        <button
-          className="button button-primary"
-          type="button"
-          onClick={() => setRetryCount((count) => count + 1)}
-        >
-          <RefreshCw size={15} aria-hidden="true" />
-          重新生成
-        </button>
-      ) : null}
-    </dialog>
+          {status === 'PENDING' || status === 'STARTING' ? (
+            <LoaderCircle className="animate-spin" aria-hidden="true" />
+          ) : null}
+          <span>{message}</span>
+        </div>
+        <DialogFooter className="sm:justify-between">
+          {challenge ? (
+            <Button variant="outline" asChild>
+              <a href={challenge.verification_uri} target="_blank" rel="noreferrer">
+                打开授权页面
+                <ExternalLink data-icon="inline-end" aria-hidden="true" />
+              </a>
+            </Button>
+          ) : <span />}
+          {status === 'ERROR' ? (
+            <Button type="button" onClick={() => setRetryCount((count) => count + 1)}>
+              <RefreshCw data-icon="inline-start" aria-hidden="true" />
+              重新生成
+            </Button>
+          ) : null}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

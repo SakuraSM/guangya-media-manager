@@ -1,14 +1,39 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, Plus, RefreshCw, Rows3 } from 'lucide-react'
-import { api } from '../api/client'
-import { PaginationControls } from '../components/PaginationControls'
-import { ErrorNotice } from '../components/ErrorNotice'
-import { LoadingScreen } from '../components/LoadingScreen'
-import { NewJobPanel } from '../components/NewJobPanel'
-import { StatusBadge } from '../components/StatusBadge'
-import { PERCENT_SCALE } from '../constants'
-import { formatBytes, formatDateTime } from '../utils/format'
+import { api } from '@/api/client'
+import { PaginationControls } from '@/components/PaginationControls'
+import { ErrorNotice } from '@/components/ErrorNotice'
+import { LoadingScreen } from '@/components/LoadingScreen'
+import { NewJobPanel } from '@/components/NewJobPanel'
+import { StatusBadge } from '@/components/StatusBadge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
+import { Progress } from '@/components/ui/progress'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { PERCENT_SCALE } from '@/constants'
+import { formatBytes, formatDateTime } from '@/utils/format'
 
 const DEFAULT_PAGE_SIZE = 20
 
@@ -33,126 +58,128 @@ export function JobsPage() {
   const jobs = jobsQuery.data.items
 
   return (
-    <div className="jobs-page">
-      <section className="page-command-bar jobs-command-bar">
+    <div className="flex h-[calc(100svh-7rem)] min-h-[36rem] flex-col gap-4">
+      <section className="flex shrink-0 flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
-          <h2>整理任务</h2>
-          <p>任务按源文件到目标目录统一展示，状态每 4 秒自动刷新。</p>
+          <h2 className="text-xl font-semibold tracking-tight">整理任务</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            任务按源文件到目标目录统一展示，状态每 4 秒自动刷新。
+          </p>
         </div>
-        <div className="jobs-command-actions">
-          <button
-            className="button button-secondary"
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
             type="button"
-            onClick={() => {
-              void jobsQuery.refetch()
-            }}
+            onClick={() => void jobsQuery.refetch()}
             disabled={jobsQuery.isFetching}
           >
-            <RefreshCw size={16} aria-hidden="true" />
+            <RefreshCw
+              data-icon="inline-start"
+              className={jobsQuery.isFetching ? 'animate-spin' : undefined}
+              aria-hidden="true"
+            />
             {jobsQuery.isFetching ? '刷新中' : '刷新'}
-          </button>
-          <button
-            className="button button-primary"
-            type="button"
-            onClick={() => setIsCreating(true)}
-            aria-expanded={isCreating}
-          >
-            <Plus size={17} aria-hidden="true" />
+          </Button>
+          <Button type="button" onClick={() => setIsCreating(true)}>
+            <Plus data-icon="inline-start" aria-hidden="true" />
             新建整理任务
-          </button>
+          </Button>
         </div>
       </section>
 
-      <section className="table-panel jobs-list-panel">
-        <div className="section-heading jobs-list-heading">
-          <div>
-            <h2>全部任务</h2>
-            <p>{jobsQuery.data.total} 个任务</p>
+      <Card className="min-h-0 flex-1 gap-0 overflow-hidden py-0">
+        <CardHeader className="flex-row items-center justify-between border-b px-4 py-4">
+          <div className="flex flex-col gap-1">
+            <CardTitle>全部任务</CardTitle>
+            <CardDescription>{jobsQuery.data.total} 个任务</CardDescription>
           </div>
-          <Rows3 size={20} aria-hidden="true" />
-        </div>
-        <div className="table-scroll jobs-table-scroll">
-          <table className="jobs-table">
-            <thead>
-              <tr>
-                <th>任务</th>
-                <th>源文件 → 目标目录</th>
-                <th>文件</th>
-                <th>审批结果</th>
-                <th>执行进度</th>
-                <th>状态</th>
-                <th>
-                  <span className="visually-hidden">操作</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {jobs.map((job) => (
-                <tr key={job.id}>
-                  <td className="job-name-cell">
-                    <strong>{job.name}</strong>
-                    <small>{formatDateTime(job.created_at)}</small>
-                  </td>
-                  <td>
-                    <div className="job-route">
-                      <div>
-                        <span>源文件</span>
-                        <code title={job.source_directory_path}>
-                          {job.source_directory_path}
-                        </code>
-                      </div>
-                      <ArrowRight size={15} aria-hidden="true" />
-                      <div>
-                        <span>目标目录</span>
-                        <code title={job.target_directory_path}>
-                          {job.target_directory_path}
-                        </code>
-                      </div>
-                    </div>
-                  </td>
-                  <td>
-                    <strong>{job.total_items}</strong>
-                    <small>{formatBytes(job.copied_bytes)} 已复制</small>
-                  </td>
-                  <td>
-                    <div className="approval-summary">
-                      <span className="count-success">{job.approved_items} 通过</span>
-                      <span className="count-warning">{job.review_items} 待审核</span>
-                      {job.failed_items > 0 ? (
-                        <span className="count-danger">{job.failed_items} 异常</span>
-                      ) : null}
-                    </div>
-                  </td>
-                  <td className="progress-cell">
-                    <span>{Math.round(job.progress * PERCENT_SCALE)}%</span>
-                    <div className="progress-track progress-track-small">
-                      <span style={{ width: `${job.progress * PERCENT_SCALE}%` }} />
-                    </div>
-                  </td>
-                  <td className="job-status-cell">
-                    <StatusBadge status={job.status} />
-                    <small>{job.current_stage}</small>
-                  </td>
-                  <td>
-                    <a
-                      className="table-action"
-                      href={`/review?job=${encodeURIComponent(job.id)}`}
-                    >
-                      查看
-                    </a>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {jobs.length === 0 ? (
-            <div className="jobs-empty-state">
-              <Rows3 size={24} aria-hidden="true" />
-              <strong>还没有整理任务</strong>
-              <span>新建任务后，扫描、审批和整理状态会显示在这里。</span>
-            </div>
-          ) : null}
-        </div>
+          <Rows3 className="text-muted-foreground" aria-hidden="true" />
+        </CardHeader>
+        <CardContent className="min-h-0 flex-1 overflow-auto p-0">
+          {jobs.length ? (
+            <Table className="min-w-[1080px]">
+              <TableHeader className="sticky top-0 bg-card shadow-[0_1px_0_var(--border)]">
+                <TableRow>
+                  <TableHead className="w-52 pl-4">任务</TableHead>
+                  <TableHead>源文件 → 目标目录</TableHead>
+                  <TableHead className="w-28">文件</TableHead>
+                  <TableHead className="w-32">审批结果</TableHead>
+                  <TableHead className="w-36">执行进度</TableHead>
+                  <TableHead className="w-36">状态</TableHead>
+                  <TableHead className="w-16">
+                    <span className="sr-only">操作</span>
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {jobs.map((job) => {
+                  const progress = Math.round(job.progress * PERCENT_SCALE)
+                  return (
+                    <TableRow key={job.id} className="h-28">
+                      <TableCell className="pl-4">
+                        <strong className="block max-w-48 truncate font-medium">
+                          {job.name}
+                        </strong>
+                        <small className="mt-1 block text-xs text-muted-foreground">
+                          {formatDateTime(job.created_at)}
+                        </small>
+                      </TableCell>
+                      <TableCell>
+                        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
+                          <PathCell label="源文件" path={job.source_directory_path} />
+                          <ArrowRight className="text-muted-foreground" aria-hidden="true" />
+                          <PathCell label="目标目录" path={job.target_directory_path} />
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <strong className="block tabular-nums">{job.total_items}</strong>
+                        <small className="mt-1 block text-xs text-muted-foreground">
+                          {formatBytes(job.copied_bytes)} 已复制
+                        </small>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col gap-1 text-xs tabular-nums">
+                          <span className="text-success">{job.approved_items} 通过</span>
+                          <span className="text-warning">{job.review_items} 待审核</span>
+                          {job.failed_items > 0 ? (
+                            <span className="text-destructive">{job.failed_items} 异常</span>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <span className="mb-2 block text-sm tabular-nums">{progress}%</span>
+                        <Progress value={progress} aria-label={`执行进度 ${progress}%`} />
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge status={job.status} />
+                        <small className="mt-2 block max-w-32 truncate text-xs text-muted-foreground">
+                          {job.current_stage}
+                        </small>
+                      </TableCell>
+                      <TableCell>
+                        <Button variant="link" size="sm" asChild>
+                          <a href={`/review?job=${encodeURIComponent(job.id)}`}>查看</a>
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          ) : (
+            <Empty className="h-full min-h-72">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Rows3 aria-hidden="true" />
+                </EmptyMedia>
+                <EmptyTitle>还没有整理任务</EmptyTitle>
+                <EmptyDescription>
+                  新建任务后，扫描、审批和整理状态会显示在这里。
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )}
+        </CardContent>
         <PaginationControls
           page={page}
           pages={jobsQuery.data.pages}
@@ -166,10 +193,17 @@ export function JobsPage() {
             setPageSize(nextPageSize)
           }}
         />
-      </section>
+      </Card>
 
-      {isCreating ? (
-        <div className="new-job-overlay" role="dialog" aria-modal="true">
+      <Dialog open={isCreating} onOpenChange={setIsCreating}>
+        <DialogContent
+          className="max-h-[92svh] overflow-y-auto sm:max-w-4xl"
+          showCloseButton={false}
+        >
+          <DialogHeader className="sr-only">
+            <DialogTitle>新建整理任务</DialogTitle>
+            <DialogDescription>选择目录、识别规则和自动化策略。</DialogDescription>
+          </DialogHeader>
           <NewJobPanel
             onCreated={() => {
               setIsCreating(false)
@@ -177,8 +211,19 @@ export function JobsPage() {
             }}
             onCancel={() => setIsCreating(false)}
           />
-        </div>
-      ) : null}
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+function PathCell({ label, path }: { label: string; path: string }) {
+  return (
+    <div className="min-w-0">
+      <span className="block text-[0.7rem] text-muted-foreground">{label}</span>
+      <code className="mt-1 block max-w-72 truncate text-xs" title={path}>
+        {path}
+      </code>
     </div>
   )
 }

@@ -53,6 +53,7 @@ describe('MatchInspector', () => {
     ).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '忽略此文件' }))
     fireEvent.click(screen.getByRole('button', { name: '重试此文件' }))
+    fireEvent.click(screen.getByRole('button', { name: '手动指定 TMDB 匹配' }))
     fireEvent.change(screen.getByLabelText('TMDB ID'), {
       target: { value: '12345' },
     })

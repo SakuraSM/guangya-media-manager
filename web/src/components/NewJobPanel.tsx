@@ -1,11 +1,35 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Bot, ScanSearch, ShieldCheck, Workflow, X } from 'lucide-react'
-import { api } from '../api/client'
-import type { CloudDirectory, CreateJobInput } from '../types'
-import { DirectoryPicker } from './DirectoryPicker'
-import { ErrorNotice } from './ErrorNotice'
-import { ScrapingOptions } from './ScrapingOptions'
+import { api } from '@/api/client'
+import type { CloudDirectory, CreateJobInput } from '@/types'
+import { DirectoryPicker } from '@/components/DirectoryPicker'
+import { ErrorNotice } from '@/components/ErrorNotice'
+import { ScrapingOptions } from '@/components/ScrapingOptions'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+  FieldTitle,
+} from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
+import { Textarea } from '@/components/ui/textarea'
 
 const DEFAULT_CONFIG: CreateJobInput['config'] = {
   generate_nfo: true,
@@ -73,30 +97,30 @@ export function NewJobPanel({ onCreated, onCancel }: NewJobPanelProps) {
   }
 
   return (
-    <form className="new-job-panel" onSubmit={handleSubmit}>
-      <div className="new-job-title">
+    <form className="flex flex-col gap-5" onSubmit={handleSubmit}>
+      <div className="flex items-start justify-between gap-4">
         <div>
-          <h2>新建整理任务</h2>
-          <p>选择源目录和目标目录，扫描后按审核策略继续执行。</p>
+          <h2 className="text-lg font-semibold tracking-tight">新建整理任务</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            选择源目录和目标目录，扫描后按审核策略继续执行。
+          </p>
         </div>
-        <button
-          className="icon-button"
-          type="button"
-          onClick={onCancel}
-          aria-label="关闭创建面板"
-        >
-          <X size={18} aria-hidden="true" />
-        </button>
+        <Button variant="ghost" size="icon" type="button" onClick={onCancel}>
+          <X aria-hidden="true" />
+          <span className="sr-only">关闭创建面板</span>
+        </Button>
       </div>
-      <div className="stepper" aria-label="任务创建步骤">
+
+      <ol className="grid grid-cols-4 gap-2" aria-label="任务创建步骤">
         {['选择目录', '识别规则', '预扫描', '审核执行'].map((step, index) => (
-          <div className={index === 0 ? 'step step-active' : 'step'} key={step}>
-            <span>{index + 1}</span>
-            <strong>{step}</strong>
-          </div>
+          <li className="flex min-w-0 items-center gap-2" key={step}>
+            <Badge variant={index === 0 ? 'default' : 'secondary'}>{index + 1}</Badge>
+            <span className="truncate text-xs text-muted-foreground">{step}</span>
+          </li>
         ))}
-      </div>
-      <div className="new-job-grid">
+      </ol>
+
+      <FieldGroup className="grid gap-4 sm:grid-cols-2">
         <DirectoryPicker
           id="source-directory"
           label="源目录"
@@ -109,36 +133,40 @@ export function NewJobPanel({ onCreated, onCancel }: NewJobPanelProps) {
           value={targetDirectory}
           onSelect={setTargetDirectory}
         />
-        <label className="field">
-          <span>整理模式</span>
-          <select value="copy" disabled>
-            <option value="copy">复制后整理</option>
-          </select>
-        </label>
-        <label className="field">
-          <span>媒体布局</span>
-          <select value={config.naming_profile} disabled>
-            <option value="UNIVERSAL_ENHANCED">Plex / Jellyfin 通用增强</option>
-          </select>
-        </label>
-        <label className="field">
-          <span>附加视频</span>
-          <select
+        <Field data-disabled>
+          <FieldLabel htmlFor="organize-mode">整理模式</FieldLabel>
+          <Input id="organize-mode" value="复制后整理" disabled readOnly />
+        </Field>
+        <Field data-disabled>
+          <FieldLabel htmlFor="media-layout">媒体布局</FieldLabel>
+          <Input id="media-layout" value="Plex / Jellyfin 通用增强" disabled readOnly />
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="extras-policy">附加视频</FieldLabel>
+          <Select
             value={config.extras_policy}
-            onChange={(event) =>
+            onValueChange={(value) =>
               setConfig((currentConfig) => ({
                 ...currentConfig,
-                extras_policy: event.target.value as typeof currentConfig.extras_policy,
+                extras_policy: value as typeof currentConfig.extras_policy,
               }))
             }
           >
-            <option value="EXCLUDE_REVIEWABLE">识别后排除，可人工恢复</option>
-            <option value="INCLUDE">分类保留</option>
-          </select>
-        </label>
-        <label className="field">
-          <span>样片阈值（MB）</span>
-          <input
+            <SelectTrigger id="extras-policy" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="EXCLUDE_REVIEWABLE">识别后排除，可人工恢复</SelectItem>
+                <SelectItem value="INCLUDE">分类保留</SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="sample-threshold">样片阈值（MB）</FieldLabel>
+          <Input
+            id="sample-threshold"
             type="number"
             min={1}
             max={10_000}
@@ -150,92 +178,100 @@ export function NewJobPanel({ onCreated, onCancel }: NewJobPanelProps) {
               }))
             }
           />
-        </label>
-        <label className="field field-wide">
-          <span>自定义排除规则</span>
-          <textarea
+        </Field>
+        <Field className="sm:col-span-2">
+          <FieldLabel htmlFor="exclude-globs">自定义排除规则</FieldLabel>
+          <Textarea
+            id="exclude-globs"
             value={excludeGlobsText}
             onChange={(event) => setExcludeGlobsText(event.target.value)}
             placeholder={'每行一个 glob，例如：临时/*\n*.torrent'}
             rows={3}
           />
-        </label>
-      </div>
+          <FieldDescription>支持每行一个 glob，也可以使用逗号分隔。</FieldDescription>
+        </Field>
+      </FieldGroup>
+
       <ScrapingOptions
         config={config}
         onChange={(changes) =>
-          setConfig((currentConfig) => ({
-            ...currentConfig,
-            ...changes,
-          }))
+          setConfig((currentConfig) => ({ ...currentConfig, ...changes }))
         }
       />
-      <fieldset className="automation-options">
-        <legend>自动化流程</legend>
-        <label className="automation-option">
-          <span className="automation-option-icon">
-            <Bot size={18} aria-hidden="true" />
-          </span>
-          <span>
-            <strong>自动审批</strong>
-            <small>
-              TMDB 置信度达到阈值时自动通过；AI 识别结果仍需人工确认。
-            </small>
-          </span>
-          <input
-            type="checkbox"
-            checked={config.auto_approve_enabled}
-            onChange={(event) =>
-              setConfig((currentConfig) => ({
-                ...currentConfig,
-                auto_approve_enabled: event.target.checked,
-              }))
-            }
-          />
-        </label>
-        <label className="automation-option">
-          <span className="automation-option-icon">
-            <Workflow size={18} aria-hidden="true" />
-          </span>
-          <span>
-            <strong>审批完成后自动整理</strong>
-            <small>
-              所有记录审批完成后，自动进入整批复制、刮削和发布流程。
-            </small>
-          </span>
-          <input
-            type="checkbox"
-            checked={config.auto_execute_after_approval}
-            onChange={(event) =>
-              setConfig((currentConfig) => ({
-                ...currentConfig,
-                auto_execute_after_approval: event.target.checked,
-              }))
-            }
-          />
-        </label>
-      </fieldset>
-      <div className="safe-operation-note">
-        <ShieldCheck size={19} aria-hidden="true" />
-        <div>
-          <strong>安全执行策略</strong>
-          <span>源目录零写入、目标同名不覆盖、失败暂存内容不自动删除。</span>
-        </div>
-      </div>
+
+      <FieldSet className="rounded-xl border p-4">
+        <FieldLegend>自动化流程</FieldLegend>
+        <FieldGroup data-slot="checkbox-group">
+          <Field orientation="horizontal">
+            <FieldLabel htmlFor="auto-approve">
+              <FieldContent>
+                <FieldTitle className="gap-2">
+                  <Bot aria-hidden="true" />
+                  自动审批
+                </FieldTitle>
+                <FieldDescription>
+                  TMDB 置信度达到阈值时自动通过；AI 识别结果仍需人工确认。
+                </FieldDescription>
+              </FieldContent>
+            </FieldLabel>
+            <Switch
+              id="auto-approve"
+              checked={config.auto_approve_enabled}
+              onCheckedChange={(checked) =>
+                setConfig((currentConfig) => ({
+                  ...currentConfig,
+                  auto_approve_enabled: checked,
+                }))
+              }
+            />
+          </Field>
+          <Field orientation="horizontal">
+            <FieldLabel htmlFor="auto-execute">
+              <FieldContent>
+                <FieldTitle className="gap-2">
+                  <Workflow aria-hidden="true" />
+                  审批完成后自动整理
+                </FieldTitle>
+                <FieldDescription>
+                  所有记录审批完成后，自动进入整批复制、刮削和发布流程。
+                </FieldDescription>
+              </FieldContent>
+            </FieldLabel>
+            <Switch
+              id="auto-execute"
+              checked={config.auto_execute_after_approval}
+              onCheckedChange={(checked) =>
+                setConfig((currentConfig) => ({
+                  ...currentConfig,
+                  auto_execute_after_approval: checked,
+                }))
+              }
+            />
+          </Field>
+        </FieldGroup>
+      </FieldSet>
+
+      <Alert>
+        <ShieldCheck aria-hidden="true" />
+        <AlertTitle>安全执行策略</AlertTitle>
+        <AlertDescription>
+          源目录零写入、目标同名不覆盖、失败暂存内容不自动删除。
+        </AlertDescription>
+      </Alert>
       {createMutation.isError ? <ErrorNotice message={createMutation.error.message} /> : null}
-      <div className="panel-actions">
-        <button
-          className="button button-primary"
+      <div className="flex justify-end">
+        <Button
           type="submit"
+          size="lg"
           disabled={!sourceDirectory || !targetDirectory || createMutation.isPending}
         >
-          <ScanSearch size={17} aria-hidden="true" />
+          <ScanSearch data-icon="inline-start" aria-hidden="true" />
           {createMutation.isPending
             ? '正在创建并扫描…'
             : config.auto_execute_after_approval
               ? '创建并启动自动流程'
               : '创建并开始预扫描'}
-        </button>
+        </Button>
       </div>
     </form>
   )
