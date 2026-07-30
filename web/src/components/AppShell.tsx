@@ -9,6 +9,7 @@ import {
 import type { ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
+import { BrandLogo } from '@/components/BrandLogo'
 import { PERCENT_SCALE } from '@/constants'
 import { formatBytes } from '@/utils/format'
 import { ThemeToggle } from '@/components/ThemeToggle'
@@ -100,12 +101,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Sidebar collapsible="icon" className="border-sidebar-border">
         <SidebarHeader className="px-3 py-4">
           <div className="flex min-w-0 items-center gap-3">
-            <img
-              src="/logo.png"
-              alt=""
-              className="size-9 shrink-0 rounded-xl object-cover shadow-xs"
-              aria-hidden="true"
-            />
+            <BrandLogo size="sidebar" />
             <span className="min-w-0 group-data-[collapsible=icon]:hidden">
               <strong className="block truncate text-sm font-semibold tracking-tight">
                 光鸭媒体管家

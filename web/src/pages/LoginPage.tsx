@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Bird, LoaderCircle, LockKeyhole, ShieldCheck } from 'lucide-react'
+import { LoaderCircle, LockKeyhole, ShieldCheck } from 'lucide-react'
 import { api } from '@/api/client'
+import { BrandLogo } from '@/components/BrandLogo'
 import { ErrorNotice } from '@/components/ErrorNotice'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Button } from '@/components/ui/button'
@@ -35,9 +36,7 @@ export function LoginPage() {
       </div>
       <Card className="w-full max-w-md">
         <CardHeader className="items-center text-center">
-          <span className="mb-2 grid size-12 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
-            <Bird aria-hidden="true" />
-          </span>
+          <BrandLogo size="login" />
           <CardTitle className="text-xl">光鸭媒体管家</CardTitle>
           <CardDescription>
             安全地扫描、识别和整理你的影视资源。源目录始终保持不变。
