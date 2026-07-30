@@ -69,7 +69,12 @@ ACKNOWLEDGED_PUBLIC_COMMIT_EMAILS = frozenset(
             "fcdea4c0eadad3abf6b3cd770cba6019a9115261",
             "author",
             "41c0abdc6573",
-        )
+        ),
+        (
+            "1f37521550f9d257034f31b124756b1dcec820b3",
+            "committer",
+            "41c0abdc6573",
+        ),
     }
 )
 
