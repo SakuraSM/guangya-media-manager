@@ -273,10 +273,21 @@ def test_executes_reviewed_job_into_library_layout() -> None:
                 "parent_path": "/光鸭云盘/电影与剧集",
             },
         ).json()
+        library_items = client.get("/api/library").json()
+        tv_show = next(item for item in library_items if item["title"] == "绝命毒师")
+        library_detail_response = client.get(f"/api/library/{tv_show['id']}")
 
     assert final_job["status"] == "COMPLETED"
     target_names = {entry["name"] for entry in target_entries}
     assert {"Movies", "TV"}.issubset(target_names)
+    assert sum(item["title"] == "绝命毒师" for item in library_items) == 1
+    assert "seasons" not in tv_show
+    assert tv_show["season_count"] == 1
+    assert tv_show["episode_count"] == 1
+    assert library_detail_response.status_code == 200
+    library_detail = library_detail_response.json()
+    assert library_detail["seasons"][0]["season_number"] == 1
+    assert library_detail["seasons"][0]["episodes"][0]["episode_number"] == 3
 
 
 def _wait_for_terminal_job(client: TestClient, job_id: str) -> dict[str, object]:

@@ -10,6 +10,7 @@ import type {
   Job,
   JobPage,
   LibraryItem,
+  LibraryItemDetail,
   ManualMatchInput,
   MatchDecision,
   MediaMatch,
@@ -201,6 +202,8 @@ export const api = {
   pollCloudLogin: (loginId: string) =>
     requestJson<CloudLoginStatus>(`/cloud/guangya/login/${loginId}`),
   getLibrary: () => requestJson<LibraryItem[]>('/library'),
+  getLibraryDetail: (entityId: string) =>
+    requestJson<LibraryItemDetail>(`/library/${encodeURIComponent(entityId)}`),
   getSettings: () => requestJson<AppSettings>('/settings'),
   updateSettings: (input: Record<string, string>) =>
     requestJson<AppSettings>('/settings', {

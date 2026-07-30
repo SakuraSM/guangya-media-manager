@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -243,13 +243,43 @@ class DashboardView(BaseModel):
 
 class LibraryItem(BaseModel):
     id: str
+    tmdb_id: int
     title: str
     year: int | None
     media_type: MediaType
     poster_url: str | None
     target_path: str
-    source_filename: str
     completed_at: datetime
+    file_count: int
+    season_count: int
+    episode_count: int
+
+
+class LibraryEpisode(BaseModel):
+    id: str
+    episode_number: int
+    title: str
+    overview: str
+    air_date: date | None
+    still_url: str | None
+    source_filename: str
+    target_path: str
+
+
+class LibrarySeason(BaseModel):
+    id: str
+    season_number: int
+    name: str
+    overview: str
+    poster_url: str | None
+    episode_count: int
+    episodes: list[LibraryEpisode]
+
+
+class LibraryItemDetail(LibraryItem):
+    overview: str
+    backdrop_url: str | None
+    seasons: list[LibrarySeason]
 
 
 class SettingsView(BaseModel):

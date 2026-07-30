@@ -3,9 +3,9 @@ import { Film, Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { api } from '@/api/client'
 import { ErrorNotice } from '@/components/ErrorNotice'
+import { LibraryCard } from '@/components/LibraryCard'
+import { LibraryDetailDialog } from '@/components/LibraryDetailDialog'
 import { LoadingScreen } from '@/components/LoadingScreen'
-import { Poster } from '@/components/Poster'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
@@ -17,10 +17,11 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group'
-import { formatDateTime } from '@/utils/format'
+import type { LibraryItem } from '@/types'
 
 export function LibraryPage() {
   const [searchTerm, setSearchTerm] = useState('')
+  const [selectedItem, setSelectedItem] = useState<LibraryItem | null>(null)
   const libraryQuery = useQuery({ queryKey: ['library'], queryFn: api.getLibrary })
   const filteredItems = useMemo(() => {
     const normalizedSearchTerm = searchTerm.trim().toLocaleLowerCase()
@@ -29,6 +30,14 @@ export function LibraryPage() {
       item.title.toLocaleLowerCase().includes(normalizedSearchTerm),
     )
   }, [libraryQuery.data, searchTerm])
+
+  function handleOpenLibraryItem(item: LibraryItem) {
+    setSelectedItem(item)
+  }
+
+  function handleDetailOpenChange(isOpen: boolean) {
+    if (!isOpen) setSelectedItem(null)
+  }
 
   if (libraryQuery.isPending) {
     return <LoadingScreen label="正在加载媒体库" />
@@ -43,7 +52,7 @@ export function LibraryPage() {
         <div>
           <h2 className="text-xl font-semibold tracking-tight">已整理媒体</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            展示通过任务完成并落入目标目录的影视内容。
+            按整部作品归类展示，点击剧集可继续浏览 Season 与单集。
           </p>
         </div>
         <InputGroup className="w-full sm:w-72">
@@ -61,30 +70,11 @@ export function LibraryPage() {
       </section>
       {filteredItems.length ? (
         <section
-          className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
+          className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3"
           aria-label="媒体列表"
         >
           {filteredItems.map((item) => (
-            <Card key={item.id}>
-              <CardContent className="flex gap-4">
-                <Poster src={item.poster_url} title={item.title} size="large" />
-                <div className="flex min-w-0 flex-1 flex-col">
-                  <Badge variant="secondary" className="mb-3 w-fit">
-                    {item.media_type === 'TV' ? '剧集' : '电影'}
-                  </Badge>
-                  <h2 className="line-clamp-2 text-base font-semibold">{item.title}</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {item.year ?? '年份未知'}
-                  </p>
-                  <code className="mt-4 line-clamp-3 break-all text-xs text-muted-foreground">
-                    {item.target_path}
-                  </code>
-                  <small className="mt-auto pt-4 text-xs text-muted-foreground">
-                    完成于 {formatDateTime(item.completed_at)}
-                  </small>
-                </div>
-              </CardContent>
-            </Card>
+            <LibraryCard key={item.id} item={item} onOpen={handleOpenLibraryItem} />
           ))}
         </section>
       ) : (
@@ -117,6 +107,10 @@ export function LibraryPage() {
           </CardContent>
         </Card>
       )}
+      <LibraryDetailDialog
+        item={selectedItem}
+        onOpenChange={handleDetailOpenChange}
+      />
     </div>
   )
 }
