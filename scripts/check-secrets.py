@@ -70,6 +70,13 @@ def fingerprint(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()[:12]
 
 
+def is_github_noreply(email: str) -> bool:
+    normalized = email.casefold()
+    return normalized == "noreply@github.com" or normalized.endswith(
+        "@users.noreply.github.com"
+    )
+
+
 def public_revisions() -> list[str]:
     return git("rev-list", "--branches", "--tags", "--remotes=origin").decode().splitlines()
 
@@ -121,7 +128,7 @@ def scan_commit_emails() -> list[str]:
     for row in rows:
         revision, author_email, committer_email = row.split("\t")
         for role, email in (("author", author_email), ("committer", committer_email)):
-            if email and not email.casefold().endswith("@users.noreply.github.com"):
+            if email and not is_github_noreply(email):
                 findings.append(
                     f"public-commit-email\tcommit={revision[:12]}\trole={role}"
                     f"\tfingerprint={fingerprint(email.encode())}"
