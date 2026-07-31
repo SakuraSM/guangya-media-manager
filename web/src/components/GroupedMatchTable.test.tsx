@@ -87,4 +87,42 @@ describe('GroupedMatchTable', () => {
     expect(screen.getByText('正在查询 TMDB/AI 元数据。')).toBeVisible()
     expect(screen.getByText('识别中')).toBeVisible()
   })
+
+  it('scrolls the active approval row inside the list viewport', () => {
+    const boundsSpy = vi
+      .spyOn(Element.prototype, 'getBoundingClientRect')
+      .mockImplementation(function getBoundingClientRect(this: Element) {
+        if (this.getAttribute('data-slot') === 'scroll-area-viewport') {
+          return DOMRect.fromRect({ y: 0, height: 100 })
+        }
+        if (this.getAttribute('data-match-id') === APPROVABLE_MATCH.id) {
+          return DOMRect.fromRect({ y: 120, height: 40 })
+        }
+        return DOMRect.fromRect()
+      })
+    const scrollTo = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+      configurable: true,
+      value: scrollTo,
+    })
+
+    try {
+      render(
+        <GroupedMatchTable
+          groups={groupMediaMatches([APPROVABLE_MATCH])}
+          selectedMatchId={APPROVABLE_MATCH.id}
+          selectedMatchIds={new Set()}
+          isSelectionEnabled
+          onSelectMatch={vi.fn()}
+          onToggleSelection={vi.fn()}
+          onTogglePageSelection={vi.fn()}
+        />,
+      )
+
+      expect(scrollTo).toHaveBeenCalledWith({ top: 60, behavior: 'smooth' })
+    } finally {
+      boundsSpy.mockRestore()
+      Reflect.deleteProperty(HTMLElement.prototype, 'scrollTo')
+    }
+  })
 })

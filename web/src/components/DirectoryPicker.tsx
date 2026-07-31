@@ -16,6 +16,11 @@ import {
 } from '@/components/ui/dialog'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 
 interface DirectoryPickerProps {
   id: string
@@ -73,12 +78,12 @@ export function DirectoryPicker({ id, label, value, onSelect }: DirectoryPickerP
             <ChevronRight data-icon="inline-end" aria-hidden="true" />
           </Button>
         </DialogTrigger>
-        <DialogContent className="sm:max-w-xl">
+        <DialogContent className="w-[calc(100%-2rem)] min-w-0 sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>浏览云盘目录</DialogTitle>
             <DialogDescription>为“{label}”选择一个光鸭云盘目录。</DialogDescription>
           </DialogHeader>
-          <div className="flex items-center gap-2 rounded-lg border bg-muted/40 p-2">
+          <div className="flex min-w-0 items-center gap-2 rounded-lg border bg-muted/40 p-2">
             <Button
               type="button"
               variant="ghost"
@@ -89,7 +94,7 @@ export function DirectoryPicker({ id, label, value, onSelect }: DirectoryPickerP
               <ChevronLeft data-icon="inline-start" aria-hidden="true" />
               返回
             </Button>
-            <code className="min-w-0 flex-1 truncate text-xs" title={current.path}>
+            <code className="min-w-0 flex-1 break-all text-xs leading-relaxed">
               {current.path}
             </code>
           </div>
@@ -97,33 +102,53 @@ export function DirectoryPicker({ id, label, value, onSelect }: DirectoryPickerP
             <ErrorNotice message={directoriesQuery.error.message} />
           ) : null}
           <ScrollArea className="h-72 rounded-lg border">
-            <div className="flex flex-col divide-y">
+            <div className="flex min-w-0 flex-col divide-y">
               {directoriesQuery.isPending ? (
                 <p className="p-6 text-center text-sm text-muted-foreground">
                   正在读取目录…
                 </p>
               ) : null}
               {directoriesQuery.data?.map((directory) => (
-                <div className="flex items-center gap-2 p-2" key={directory.id}>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="h-auto min-w-0 flex-1 justify-start py-2"
-                    onClick={() => enterDirectory(directory)}
-                  >
-                    <Folder data-icon="inline-start" aria-hidden="true" />
-                    <span className="min-w-0 flex-1 text-left">
-                      <strong className="block truncate font-medium">{directory.name}</strong>
-                      <small className="block text-xs text-muted-foreground">
-                        {directory.item_count} 个项目
-                      </small>
-                    </span>
-                    <ChevronRight data-icon="inline-end" aria-hidden="true" />
-                  </Button>
+                <div
+                  className="flex min-w-0 items-center gap-2 overflow-hidden p-2"
+                  key={directory.id}
+                >
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="h-auto min-w-0 flex-1 justify-start overflow-hidden py-2"
+                        onClick={() => enterDirectory(directory)}
+                        aria-label={`打开目录 ${directory.name}`}
+                      >
+                        <Folder data-icon="inline-start" aria-hidden="true" />
+                        <span className="min-w-0 flex-1 overflow-hidden text-left">
+                          <strong className="block truncate font-medium">
+                            {directory.name}
+                          </strong>
+                          <small className="block truncate text-xs text-muted-foreground">
+                            {directory.item_count === null
+                              ? '项目数量未知'
+                              : `${directory.item_count} 个项目`}
+                          </small>
+                        </span>
+                        <ChevronRight
+                          data-icon="inline-end"
+                          className="shrink-0"
+                          aria-hidden="true"
+                        />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-[min(24rem,calc(100vw-2rem))] break-all">
+                      {directory.path}
+                    </TooltipContent>
+                  </Tooltip>
                   <Button
                     variant="outline"
                     size="sm"
                     type="button"
+                    className="shrink-0"
                     onClick={() => chooseDirectory(directory)}
                   >
                     选择
@@ -147,7 +172,7 @@ export function DirectoryPicker({ id, label, value, onSelect }: DirectoryPickerP
                     parent_id: '',
                     name: current.name,
                     path: current.path,
-                    item_count: 0,
+                    item_count: null,
                   })
                 }
               >

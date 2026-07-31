@@ -53,7 +53,7 @@ class CloudDirectory(ApiModel):
     parent_id: str
     name: str
     path: str
-    item_count: int = 0
+    item_count: int | None = None
 
 
 class JobConfig(BaseModel):
@@ -212,10 +212,41 @@ class BatchApproveMatchesResult(BaseModel):
 
 class ManualMatchRequest(BaseModel):
     tmdb_id: int = Field(gt=0)
-    title: str = Field(min_length=1, max_length=256)
+    title: str = Field(default="", max_length=256)
     original_title: str = Field(default="", max_length=256)
     year: int | None = Field(default=None, ge=1870, le=2100)
     media_type: MediaType
+    season_number: int | None = Field(default=None, ge=0, le=99)
+    episode_numbers: list[int] = Field(
+        default_factory=list,
+        max_length=20,
+    )
+
+
+class TmdbSeasonSummary(BaseModel):
+    season_number: int
+    name: str
+    episode_count: int
+    poster_url: str | None
+
+
+class TmdbEpisodeSummary(BaseModel):
+    episode_number: int
+    name: str
+    overview: str
+    air_date: date | None
+    still_url: str | None
+
+
+class ManualMatchPreview(BaseModel):
+    tmdb_id: int
+    title: str
+    year: int | None
+    media_type: MediaType
+    season_number: int | None
+    episode_numbers: list[int]
+    missing_episode_numbers: list[int]
+    target_path: str
 
 
 class DashboardMetrics(BaseModel):

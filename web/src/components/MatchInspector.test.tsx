@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { MediaMatch } from '../types'
@@ -28,23 +29,28 @@ const UNRESOLVED_MATCH: MediaMatch = {
 }
 
 describe('MatchInspector', () => {
-  it('keeps ignore, retry, and manual matching usable without candidates', () => {
+  it('keeps ignore, retry, and TMDB search usable without candidates', () => {
     const handleToggleIgnore = vi.fn()
     const handleRetry = vi.fn()
     const handleManualMatch = vi.fn()
 
     render(
-      <MatchInspector
-        mediaMatch={UNRESOLVED_MATCH}
-        selectedCandidateId={null}
-        isSaving={false}
-        isRetrying={false}
-        onSelectCandidate={vi.fn()}
-        onApprove={vi.fn()}
-        onToggleIgnore={handleToggleIgnore}
-        onRetry={handleRetry}
-        onManualMatch={handleManualMatch}
-      />,
+      <QueryClientProvider client={new QueryClient()}>
+        <MatchInspector
+          jobId="job-1"
+          mediaMatch={UNRESOLVED_MATCH}
+          selectedCandidateId={null}
+          isSaving={false}
+          isRetrying={false}
+          isRetryingGroup={false}
+          onSelectCandidate={vi.fn()}
+          onApprove={vi.fn()}
+          onToggleIgnore={handleToggleIgnore}
+          onRetry={handleRetry}
+          onRetryGroup={vi.fn()}
+          onManualMatch={handleManualMatch}
+        />
+      </QueryClientProvider>,
     )
 
     expect(screen.getByRole('button', { name: '采用此匹配' })).toBeDisabled()
@@ -53,24 +59,11 @@ describe('MatchInspector', () => {
     ).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '忽略此文件' }))
     fireEvent.click(screen.getByRole('button', { name: '重试此文件' }))
-    fireEvent.click(screen.getByRole('button', { name: '手动指定 TMDB 匹配' }))
-    fireEvent.change(screen.getByLabelText('TMDB ID'), {
-      target: { value: '12345' },
-    })
-    const manualMatchForm = screen
-      .getByRole('button', { name: '保存并采用手动匹配' })
-      .closest('form')
-    expect(manualMatchForm).not.toBeNull()
-    if (manualMatchForm) fireEvent.submit(manualMatchForm)
+    fireEvent.click(screen.getByRole('button', { name: '搜索并手动匹配 TMDB' }))
 
     expect(handleToggleIgnore).toHaveBeenCalledOnce()
     expect(handleRetry).toHaveBeenCalledOnce()
-    expect(handleManualMatch).toHaveBeenCalledWith({
-      tmdbId: 12345,
-      title: '示例剧',
-      originalTitle: '',
-      year: 2026,
-      mediaType: 'TV',
-    })
+    expect(screen.getByLabelText('TMDB 关键字')).toBeVisible()
+    expect(handleManualMatch).not.toHaveBeenCalled()
   })
 })

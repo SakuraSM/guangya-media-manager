@@ -6,6 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain import MatchDecision, SourceClassification
 from app.models import MediaMatch, OrganizeJob, SourceItem
 from app.providers.base import CloudNode
+from app.services.directory_episode_inference import (
+    DirectoryEpisodeInference,
+    infer_directory_episode_sequences,
+)
 from app.services.media_parser import ParsedMediaName, parse_media_filename
 
 RULE_PARSE_START_PROGRESS = 0.36
@@ -34,8 +38,9 @@ class IncrementalMatchStore:
     ) -> list[PendingMediaRecord]:
         records: list[PendingMediaRecord] = []
         total_items = len(media_nodes)
+        inferences = infer_directory_episode_sequences(media_nodes)
         for item_number, cloud_node in enumerate(media_nodes, start=1):
-            record = self._build_pending_record(cloud_node)
+            record = self._build_pending_record(cloud_node, inferences)
             records.append(record)
             self._session.add(record.media_match)
             if _should_commit_rule_batch(item_number, total_items):
@@ -43,12 +48,24 @@ class IncrementalMatchStore:
                 await self._session.commit()
         return records
 
-    def _build_pending_record(self, cloud_node: CloudNode) -> PendingMediaRecord:
+    def _build_pending_record(
+        self,
+        cloud_node: CloudNode,
+        inferences: dict[str, DirectoryEpisodeInference],
+    ) -> PendingMediaRecord:
         parent_path = str(PurePosixPath(cloud_node.path).parent)
+        inference = inferences.get(parent_path)
+        inferred_season_number = (
+            inference.season_number
+            if inference is not None
+            and cloud_node.id in inference.episode_numbers_by_node_id
+            else None
+        )
         parsed = parse_media_filename(
             cloud_node.name,
             parent_path=parent_path,
             source_root=self._job.source_directory_path,
+            inferred_season_number=inferred_season_number,
         )
         group_key = _rule_group_key(parsed, parent_path)
         source_item = SourceItem(

@@ -152,6 +152,39 @@ async def test_metadata_resolver_requires_confirmation_after_ai_fallback() -> No
     assert "AI_MANUAL_CONFIRMATION_REQUIRED" in resolution.parsed.reason_codes
 
 
+async def test_ai_receives_the_whole_media_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_client = RecordingGroupAsyncClient()
+    monkeypatch.setattr(
+        "app.services.metadata.httpx.AsyncClient",
+        lambda **_: fake_client,
+    )
+    service = AiRecognitionService(
+        Settings(
+            ai_api_key="test-key",
+            ai_base_url="https://example.invalid/v1",
+            ai_model="test-model",
+        )
+    )
+    parsed = parse_media_filename("01.mp4", parent_path="示例剧")
+
+    result = await service.recognize(
+        filename="01.mp4",
+        parent_path="示例剧",
+        parsed=parsed,
+        group_files=("示例剧/01.mp4", "示例剧/02.mp4", "示例剧/03.mp4"),
+    )
+
+    assert "AI_RECOGNIZED" in result.reason_codes
+    assert fake_client.user_payload["total_files"] == 3
+    assert fake_client.user_payload["relative_files"] == [
+        "示例剧/01.mp4",
+        "示例剧/02.mp4",
+        "示例剧/03.mp4",
+    ]
+
+
 @dataclass
 class CallLog:
     events: list[str]
@@ -184,6 +217,7 @@ class RecordingAiService(AiRecognitionService):
         filename: str,
         parent_path: str,
         parsed: ParsedMediaName,
+        group_files: tuple[str, ...] = (),
     ) -> ParsedMediaName:
         self._call_log.events.append("ai")
         return self._result
@@ -252,3 +286,47 @@ class InvalidJsonAsyncClient(FakeAsyncClient):
     async def post(self, *_: object, **__: object) -> FakeResponse:
         self.request_count += 1
         return InvalidJsonResponse()
+
+
+class ValidRecognitionResponse(FakeResponse):
+    def json(self) -> dict[str, object]:
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "media_type": "TV",
+                                "title": "示例剧",
+                                "year": 2026,
+                                "season": 1,
+                                "episodes": [],
+                                "edition": "",
+                                "confidence": 0.9,
+                            }
+                        )
+                    }
+                }
+            ]
+        }
+
+
+class RecordingGroupAsyncClient(FakeAsyncClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.user_payload: dict[str, object] = {}
+
+    async def post(self, *_: object, **kwargs: object) -> FakeResponse:
+        self.request_count += 1
+        request_json = kwargs.get("json")
+        assert isinstance(request_json, dict)
+        messages = request_json.get("messages")
+        assert isinstance(messages, list)
+        user_message = messages[1]
+        assert isinstance(user_message, dict)
+        content = user_message.get("content")
+        assert isinstance(content, str)
+        payload = json.loads(content)
+        assert isinstance(payload, dict)
+        self.user_payload = payload
+        return ValidRecognitionResponse()

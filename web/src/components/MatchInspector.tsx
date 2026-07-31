@@ -1,30 +1,24 @@
-import { useState } from 'react'
 import {
   Check,
-  ChevronDown,
   CircleAlert,
   CircleSlash,
   FolderOutput,
+  RefreshCcw,
   RotateCcw,
   Undo2,
 } from 'lucide-react'
 import { Poster } from '@/components/Poster'
 import { RecognitionNotice } from '@/components/RecognitionNotice'
+import { ManualTmdbMatchForm } from '@/components/ManualTmdbMatchForm'
 import {
   MATCH_DECISION,
   type ManualMatchInput,
   type MatchCandidate,
   type MediaMatch,
-  type MediaType,
 } from '@/types'
 import { formatConfidence } from '@/utils/format'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
 import {
   Empty,
   EmptyDescription,
@@ -32,46 +26,38 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
-import {
-  Field,
-  FieldError,
-  FieldGroup,
-  FieldLabel,
-} from '@/components/ui/field'
-import { Input } from '@/components/ui/input'
+import { Field, FieldLabel } from '@/components/ui/field'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 
 interface MatchInspectorProps {
+  jobId: string
   mediaMatch: MediaMatch | null
   selectedCandidateId: number | null
   isSaving: boolean
   isRetrying: boolean
+  isRetryingGroup: boolean
   onSelectCandidate: (candidateId: number) => void
   onApprove: () => void
   onToggleIgnore: () => void
   onRetry: () => void
+  onRetryGroup: () => void
   onManualMatch: (match: ManualMatchInput) => void
 }
 
 export function MatchInspector({
+  jobId,
   mediaMatch,
   selectedCandidateId,
   isSaving,
   isRetrying,
+  isRetryingGroup,
   onSelectCandidate,
   onApprove,
   onToggleIgnore,
   onRetry,
+  onRetryGroup,
   onManualMatch,
 }: MatchInspectorProps) {
   if (!mediaMatch) {
@@ -157,15 +143,16 @@ export function MatchInspector({
             </div>
           ) : null}
 
-          <ManualMatchForm
+          <ManualTmdbMatchForm
             key={mediaMatch.id}
+            jobId={jobId}
             mediaMatch={mediaMatch}
             isSaving={isSaving}
             onSubmit={onManualMatch}
           />
         </div>
       </ScrollArea>
-      <div className="grid shrink-0 gap-2 border-t bg-card p-3 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
+      <div className="grid shrink-0 gap-2 border-t bg-card p-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
         <Button type="button" disabled={!selectedCandidate || isSaving} onClick={onApprove}>
           <Check data-icon="inline-start" aria-hidden="true" />
           采用此匹配
@@ -178,6 +165,15 @@ export function MatchInspector({
         >
           <RotateCcw data-icon="inline-start" aria-hidden="true" />
           {isRetrying ? '正在重试' : '重试此文件'}
+        </Button>
+        <Button
+          variant="outline"
+          type="button"
+          disabled={isSaving || isRetryingGroup}
+          onClick={onRetryGroup}
+        >
+          <RefreshCcw data-icon="inline-start" aria-hidden="true" />
+          {isRetryingGroup ? '正在重试整组' : '重试整个影视组'}
         </Button>
         <Button variant="outline" type="button" disabled={isSaving} onClick={onToggleIgnore}>
           {mediaMatch.decision === MATCH_DECISION.IGNORED ? (
@@ -219,135 +215,5 @@ function CandidateOption({
         {formatConfidence(candidate.score)}
       </strong>
     </FieldLabel>
-  )
-}
-
-function ManualMatchForm({
-  mediaMatch,
-  isSaving,
-  onSubmit,
-}: {
-  mediaMatch: MediaMatch
-  isSaving: boolean
-  onSubmit: (match: ManualMatchInput) => void
-}) {
-  const [isOpen, setIsOpen] = useState(false)
-  const [tmdbId, setTmdbId] = useState('')
-  const [title, setTitle] = useState(mediaMatch.parsed_title)
-  const [originalTitle, setOriginalTitle] = useState('')
-  const [year, setYear] = useState(mediaMatch.parsed_year ? String(mediaMatch.parsed_year) : '')
-  const [mediaType, setMediaType] = useState<Exclude<MediaType, 'UNKNOWN'>>(
-    mediaMatch.media_type === 'TV' ? 'TV' : 'MOVIE',
-  )
-  const [validationMessage, setValidationMessage] = useState('')
-
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const parsedTmdbId = Number(tmdbId)
-    const parsedYear = year ? Number(year) : null
-    if (!Number.isInteger(parsedTmdbId) || parsedTmdbId <= 0 || !title.trim()) {
-      setValidationMessage('请填写有效的 TMDB ID 和标题。')
-      return
-    }
-    if (parsedYear !== null && !Number.isInteger(parsedYear)) {
-      setValidationMessage('年份必须是整数。')
-      return
-    }
-    setValidationMessage('')
-    onSubmit({
-      tmdbId: parsedTmdbId,
-      title: title.trim(),
-      originalTitle: originalTitle.trim(),
-      year: parsedYear,
-      mediaType,
-    })
-  }
-
-  return (
-    <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-      <CollapsibleTrigger asChild>
-        <Button variant="outline" type="button" className="w-full justify-between">
-          手动指定 TMDB 匹配
-          <ChevronDown
-            data-icon="inline-end"
-            className={cn('transition-transform', isOpen && 'rotate-180')}
-            aria-hidden="true"
-          />
-        </Button>
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        <form className="mt-3 rounded-lg border p-3" onSubmit={handleSubmit}>
-          <FieldGroup className="grid gap-3 sm:grid-cols-2">
-            <Field>
-              <FieldLabel htmlFor="manual-tmdb-id">TMDB ID</FieldLabel>
-              <Input
-                id="manual-tmdb-id"
-                type="number"
-                min="1"
-                value={tmdbId}
-                onChange={(event) => setTmdbId(event.target.value)}
-                required
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="manual-media-type">类型</FieldLabel>
-              <Select
-                value={mediaType}
-                onValueChange={(value) => {
-                  if (value === 'MOVIE' || value === 'TV') setMediaType(value)
-                }}
-              >
-                <SelectTrigger id="manual-media-type" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem value="MOVIE">电影</SelectItem>
-                    <SelectItem value="TV">电视剧</SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field className="sm:col-span-2">
-              <FieldLabel htmlFor="manual-title">标题</FieldLabel>
-              <Input
-                id="manual-title"
-                type="text"
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                required
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="manual-original-title">原始标题</FieldLabel>
-              <Input
-                id="manual-original-title"
-                type="text"
-                value={originalTitle}
-                onChange={(event) => setOriginalTitle(event.target.value)}
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="manual-year">年份</FieldLabel>
-              <Input
-                id="manual-year"
-                type="number"
-                min="1870"
-                max="2100"
-                value={year}
-                onChange={(event) => setYear(event.target.value)}
-              />
-            </Field>
-            {validationMessage ? (
-              <FieldError className="sm:col-span-2">{validationMessage}</FieldError>
-            ) : null}
-            <Button className="sm:col-span-2" type="submit" disabled={isSaving}>
-              <Check data-icon="inline-start" aria-hidden="true" />
-              保存并采用手动匹配
-            </Button>
-          </FieldGroup>
-        </form>
-      </CollapsibleContent>
-    </Collapsible>
   )
 }

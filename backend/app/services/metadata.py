@@ -19,6 +19,7 @@ TMDB_SEASON_TIMEOUT_SECONDS = 8
 TMDB_SEASON_MAX_ATTEMPTS = 2
 TMDB_SEARCH_CONCURRENCY = 4
 AI_RECOGNITION_CONCURRENCY = 2
+MAX_AI_GROUP_FILES = 200
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,10 +57,19 @@ class SeasonMetadata:
 
 
 @dataclass(frozen=True, slots=True)
+class SeasonSummaryMetadata:
+    season_number: int
+    name: str
+    episode_count: int
+    poster_url: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class MetadataResolutionRequest:
     filename: str
     parent_path: str
     parsed: ParsedMediaName
+    group_files: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +165,52 @@ class TmdbService:
             and (candidate := _to_metadata_candidate(item, parsed)) is not None
         ]
 
+    async def search_query(
+        self,
+        *,
+        query: str,
+        media_type: MediaType,
+        year: int | None = None,
+    ) -> list[MetadataCandidate]:
+        parsed = ParsedMediaName(
+            media_type=media_type,
+            title=query.strip(),
+            year=year,
+            season_number=None,
+            episode_numbers=(),
+            edition="",
+            confidence=0,
+            reason_codes=("MANUAL_TMDB_SEARCH",),
+            is_ignored=False,
+        )
+        return await self.search(parsed)
+
+    async def get_tv_seasons(self, series_id: int) -> tuple[SeasonSummaryMetadata, ...]:
+        payload = await self.get_media_details(
+            tmdb_id=series_id,
+            media_type=MediaType.TV,
+            language="zh-CN",
+        )
+        seasons_value = payload.get("seasons", [])
+        if not isinstance(seasons_value, list):
+            raise MetadataServiceError("TMDB returned invalid seasons")
+        seasons: list[SeasonSummaryMetadata] = []
+        for item in seasons_value:
+            if not isinstance(item, dict):
+                continue
+            season_number = item.get("season_number")
+            if not isinstance(season_number, int):
+                continue
+            seasons.append(
+                SeasonSummaryMetadata(
+                    season_number=season_number,
+                    name=_string_value(item.get("name")),
+                    episode_count=_int_value(item.get("episode_count"), 0),
+                    poster_url=_image_url(item.get("poster_path")),
+                )
+            )
+        return tuple(seasons)
+
     async def get_tv_season(self, series_id: int, season_number: int) -> SeasonMetadata | None:
         if not self._token:
             return None
@@ -197,6 +253,46 @@ class TmdbService:
                 "language": language,
                 "append_to_response": ("credits,external_ids,release_dates,content_ratings"),
             },
+        )
+
+    async def get_candidate(
+        self,
+        *,
+        tmdb_id: int,
+        media_type: MediaType,
+        language: str = "zh-CN",
+    ) -> MetadataCandidate | None:
+        payload = await self.get_media_details(
+            tmdb_id=tmdb_id,
+            media_type=media_type,
+            language=language,
+        )
+        if not payload:
+            return None
+        title_key = "name" if media_type == MediaType.TV else "title"
+        original_title_key = (
+            "original_name" if media_type == MediaType.TV else "original_title"
+        )
+        date_key = "first_air_date" if media_type == MediaType.TV else "release_date"
+        title = _string_value(payload.get(title_key))
+        if not title:
+            return None
+        release_date = _string_value(payload.get(date_key))
+        year = (
+            int(release_date[:4])
+            if len(release_date) >= 4 and release_date[:4].isdigit()
+            else None
+        )
+        return MetadataCandidate(
+            tmdb_id=tmdb_id,
+            title=title,
+            original_title=_string_value(payload.get(original_title_key)) or title,
+            year=year,
+            media_type=media_type,
+            score=1,
+            poster_url=_image_url(payload.get("poster_path")),
+            backdrop_url=_image_url(payload.get("backdrop_path")),
+            overview=_string_value(payload.get("overview")),
         )
 
     async def _get_json(
@@ -267,7 +363,12 @@ class AiRecognitionService:
         self._model = model
 
     async def recognize(
-        self, *, filename: str, parent_path: str, parsed: ParsedMediaName
+        self,
+        *,
+        filename: str,
+        parent_path: str,
+        parsed: ParsedMediaName,
+        group_files: tuple[str, ...] = (),
     ) -> ParsedMediaName:
         if not self._api_key:
             return _append_reason_codes(parsed, "AI_FALLBACK", "AI_NOT_CONFIGURED")
@@ -278,7 +379,7 @@ class AiRecognitionService:
                 {
                     "role": "system",
                     "content": (
-                        "识别影视文件名，只返回 JSON。字段为 media_type、title、year、"
+                        "按整个目录识别同一影视分组，只返回 JSON。字段为 media_type、title、year、"
                         "season、episodes、edition、confidence。"
                         "media_type 只能为 MOVIE/TV/UNKNOWN。"
                     ),
@@ -286,7 +387,12 @@ class AiRecognitionService:
                 {
                     "role": "user",
                     "content": json.dumps(
-                        {"filename": filename, "parent_path": parent_path},
+                        {
+                            "representative_filename": filename,
+                            "parent_path": parent_path,
+                            "relative_files": list(group_files[:MAX_AI_GROUP_FILES]),
+                            "total_files": len(group_files) or 1,
+                        },
                         ensure_ascii=False,
                     ),
                 },
@@ -353,6 +459,7 @@ class MetadataResolver:
                 filename=request.filename,
                 parent_path=request.parent_path,
                 parsed=parsed,
+                group_files=request.group_files,
             )
         if "AI_RECOGNIZED" not in recognized.reason_codes:
             return MetadataResolution(
@@ -375,6 +482,22 @@ class MetadataResolver:
             parsed=recognized,
             candidates=fallback_candidates,
             requires_manual_confirmation=True,
+        )
+
+    async def resolve_tmdb_only(
+        self,
+        request: MetadataResolutionRequest,
+    ) -> MetadataResolution:
+        parsed, candidates = await self._search_tmdb(
+            request.parsed,
+            success_reason="TMDB_PRIMARY_MATCH",
+            empty_reason="TMDB_NO_RESULTS",
+            failure_reason="TMDB_FAILED",
+        )
+        return MetadataResolution(
+            parsed=parsed,
+            candidates=candidates,
+            requires_manual_confirmation=False,
         )
 
     async def _search_tmdb(

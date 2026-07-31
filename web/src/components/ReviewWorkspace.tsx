@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/sheet'
 
 interface ReviewWorkspaceProps {
+  jobId: string
   matchGroups: MediaMatchGroup[]
   matchPage: MediaMatchPage
   selectedMatch: MediaMatch | null
@@ -38,6 +39,7 @@ interface ReviewWorkspaceProps {
   isFetching: boolean
   isSaving: boolean
   isRetrying: boolean
+  isRetryingGroup: boolean
   onSelectMatch: (mediaMatch: MediaMatch) => void
   onToggleMatchSelection: (matchId: string) => void
   onTogglePageSelection: () => void
@@ -45,6 +47,7 @@ interface ReviewWorkspaceProps {
   onApprove: () => void
   onToggleIgnore: () => void
   onRetry: () => void
+  onRetryGroup: () => void
   onManualMatch: (match: ManualMatchInput) => void
   onPageChange: (page: number) => void
   onPageSizeChange: (pageSize: number) => void
@@ -83,14 +86,17 @@ export function ReviewWorkspace(props: ReviewWorkspaceProps) {
   )
   const inspector = (
     <MatchInspector
+      jobId={props.jobId}
       mediaMatch={props.selectedMatch}
       selectedCandidateId={props.selectedCandidateId}
       isSaving={props.isSaving}
       isRetrying={props.isRetrying}
+      isRetryingGroup={props.isRetryingGroup}
       onSelectCandidate={props.onSelectCandidate}
       onApprove={props.onApprove}
       onToggleIgnore={props.onToggleIgnore}
       onRetry={props.onRetry}
+      onRetryGroup={props.onRetryGroup}
       onManualMatch={props.onManualMatch}
     />
   )

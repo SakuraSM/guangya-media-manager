@@ -104,6 +104,15 @@ export function ReviewPage() {
       await refreshReviewData()
     },
   })
+  const groupRetryMutation = useMutation({
+    mutationFn: (groupKey: string) =>
+      api.retryMediaGroup(selectedJobId, groupKey),
+    onSuccess: async (result) => {
+      setActionMessage(`影视分组重试完成，共更新 ${result.updated_items} 条记录。`)
+      setSelectedCandidateId(null)
+      await refreshReviewData()
+    },
+  })
   const manualMatchMutation = useMutation({
     mutationFn: ({ matchId, match }: { matchId: string; match: ManualMatchInput }) =>
       api.assignManualMatch({ jobId: selectedJobId, matchId, match }),
@@ -190,6 +199,7 @@ export function ReviewPage() {
   const mutationError = [
     updateMutation.error,
     retryMutation.error,
+    groupRetryMutation.error,
     manualMatchMutation.error,
     executeMutation.error,
     cancelMutation.error,
@@ -235,6 +245,9 @@ export function ReviewPage() {
   const handleRetry = () => {
     if (selectedMatch) retryMutation.mutate(selectedMatch.id)
   }
+  const handleRetryGroup = () => {
+    if (selectedMatch) groupRetryMutation.mutate(selectedMatch.group_key)
+  }
   const handleManualMatch = (match: ManualMatchInput) => {
     if (selectedMatch) {
       manualMatchMutation.mutate({ matchId: selectedMatch.id, match })
@@ -275,6 +288,7 @@ export function ReviewPage() {
       />
       {mutationError ? <ErrorNotice message={mutationError.message} /> : null}
       <ReviewWorkspace
+        jobId={selectedJobId}
         matchGroups={matchGroups}
         matchPage={matchPage}
         selectedMatch={selectedMatch}
@@ -289,6 +303,7 @@ export function ReviewPage() {
           !isJobEditable
         }
         isRetrying={retryMutation.isPending}
+        isRetryingGroup={groupRetryMutation.isPending}
         onSelectMatch={handleSelectMatch}
         onToggleMatchSelection={batchApproval.toggleMatchSelection}
         onTogglePageSelection={batchApproval.togglePageSelection}
@@ -296,6 +311,7 @@ export function ReviewPage() {
         onApprove={handleApprove}
         onToggleIgnore={handleToggleIgnore}
         onRetry={handleRetry}
+        onRetryGroup={handleRetryGroup}
         onManualMatch={handleManualMatch}
         onPageChange={handlePageChange}
         onPageSizeChange={handlePageSizeChange}

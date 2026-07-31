@@ -12,12 +12,16 @@ import type {
   LibraryItem,
   LibraryItemDetail,
   ManualMatchInput,
+  ManualMatchPreview,
+  MatchCandidate,
   MatchDecision,
   MediaMatch,
   MediaMatchPage,
   SourceAction,
   SourceItem,
   SessionState,
+  TmdbEpisodeSummary,
+  TmdbSeasonSummary,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api'
@@ -70,6 +74,13 @@ interface BatchApproveMatchesInput {
 
 interface AssignManualMatchInput extends MatchActionInput {
   match: ManualMatchInput
+}
+
+interface SearchTmdbInput {
+  jobId: string
+  query: string
+  mediaType: 'MOVIE' | 'TV'
+  year?: number | null
 }
 
 async function requestJson<ResponseBody>(
@@ -168,6 +179,11 @@ export const api = {
         }),
       },
     ),
+  retryMediaGroup: (jobId: string, groupKey: string) =>
+    requestJson<{ group_key: string; updated_items: number }>(
+      `/jobs/${jobId}/groups/${encodeURIComponent(groupKey)}/retry`,
+      { method: 'POST' },
+    ),
   batchApproveMatches: ({ jobId, items }: BatchApproveMatchesInput) =>
     requestJson<BatchApprovalResult>(`/jobs/${jobId}/matches/batch`, {
       method: 'PUT',
@@ -191,8 +207,44 @@ export const api = {
         original_title: match.originalTitle,
         year: match.year,
         media_type: match.mediaType,
+        season_number: match.seasonNumber,
+        episode_numbers: match.episodeNumbers,
       }),
     }),
+  previewManualMatch: ({ jobId, matchId, match }: AssignManualMatchInput) =>
+    requestJson<ManualMatchPreview>(
+      `/jobs/${jobId}/matches/${matchId}/manual/preview`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          tmdb_id: match.tmdbId,
+          title: match.title,
+          original_title: match.originalTitle,
+          year: match.year,
+          media_type: match.mediaType,
+          season_number: match.seasonNumber,
+          episode_numbers: match.episodeNumbers,
+        }),
+      },
+    ),
+  searchTmdb: ({ jobId, query, mediaType, year }: SearchTmdbInput) => {
+    const parameters = new URLSearchParams({
+      q: query,
+      media_type: mediaType,
+    })
+    if (year) parameters.set('year', String(year))
+    return requestJson<MatchCandidate[]>(
+      `/jobs/${jobId}/tmdb/search?${parameters.toString()}`,
+    )
+  },
+  getTmdbSeasons: (jobId: string, tmdbId: number) =>
+    requestJson<TmdbSeasonSummary[]>(
+      `/jobs/${jobId}/tmdb/tv/${tmdbId}/seasons`,
+    ),
+  getTmdbEpisodes: (jobId: string, tmdbId: number, seasonNumber: number) =>
+    requestJson<TmdbEpisodeSummary[]>(
+      `/jobs/${jobId}/tmdb/tv/${tmdbId}/seasons/${seasonNumber}`,
+    ),
   getDirectories: (parentId = '', parentPath = '/光鸭云盘') => {
     const query = new URLSearchParams({ parent_id: parentId, parent_path: parentPath })
     return requestJson<CloudDirectory[]>(`/cloud/directories?${query.toString()}`)

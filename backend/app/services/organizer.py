@@ -1,15 +1,23 @@
+from dataclasses import replace
 from pathlib import PurePosixPath
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from app.domain import JobStatus, MatchDecision
-from app.models import AuditEvent, MediaMatch, OrganizeJob, SourceItem
+from app.domain import JobStatus, MatchDecision, MediaType
+from app.models import (
+    AuditEvent,
+    MediaMatch,
+    MediaMatchEpisode,
+    OrganizeJob,
+    SourceItem,
+)
 from app.providers.base import CloudProvider
 from app.schemas import (
     BatchApproveMatchesRequest,
     CreateJobRequest,
+    ManualMatchPreview,
     ManualMatchRequest,
     UpdateMatchRequest,
 )
@@ -20,11 +28,12 @@ from app.services.metadata import (
     MetadataCandidate,
     MetadataResolutionRequest,
     MetadataResolver,
+    MetadataServiceError,
     TmdbService,
 )
 from app.services.naming import NamingInput, build_target_relative_path
 from app.services.organizer_execute import ExecutionWorkflow
-from app.services.organizer_scan import ScanWorkflow
+from app.services.organizer_scan import ScanWorkflow, _persist_season_metadata
 from app.services.organizer_support import (
     OrganizerError,
     candidate_to_dict,
@@ -63,6 +72,7 @@ class OrganizerService:
         ai_service: AiRecognitionService,
     ) -> None:
         self._session_factory = session_factory
+        self._tmdb_service = tmdb_service
         self._scan_workflow = ScanWorkflow(
             session_factory=session_factory,
             provider=provider,
@@ -306,7 +316,14 @@ class OrganizerService:
             parent_path=parent_path,
             source_root=job.source_directory_path,
         )
-        resolution = await self._metadata_resolver.resolve(
+        if media_match.episode_numbers:
+            parsed = replace(
+                parsed,
+                media_type=media_match.media_type,
+                season_number=media_match.season_number,
+                episode_numbers=tuple(media_match.episode_numbers),
+            )
+        resolution = await self._metadata_resolver.resolve_tmdb_only(
             MetadataResolutionRequest(
                 filename=media_match.source_item.filename,
                 parent_path=str(PurePosixPath(media_match.source_item.relative_path).parent),
@@ -363,6 +380,130 @@ class OrganizerService:
         await self._refresh_job_readiness(session, job_id)
         return media_match
 
+    async def retry_group(
+        self,
+        *,
+        job_id: str,
+        group_key: str,
+        session: AsyncSession,
+    ) -> int:
+        job = await load_job(session, job_id)
+        if job.status not in EDITABLE_JOB_STATUSES:
+            raise OrganizerError("当前任务状态不能重新识别分组")
+        matches = list(
+            (
+                await session.scalars(
+                    select(MediaMatch)
+                    .join(SourceItem)
+                    .options(selectinload(MediaMatch.source_item))
+                    .where(
+                        SourceItem.job_id == job_id,
+                        MediaMatch.group_key == group_key,
+                    )
+                    .order_by(SourceItem.relative_path.asc())
+                )
+            ).all()
+        )
+        if not matches:
+            raise OrganizerError("Media group not found")
+        representative = matches[0]
+        representative_parsed = parse_media_filename(
+            representative.source_item.filename,
+            parent_path=str(
+                PurePosixPath(representative.source_item.source_path).parent
+            ),
+            source_root=job.source_directory_path,
+        )
+        resolution = await self._metadata_resolver.resolve(
+            MetadataResolutionRequest(
+                filename=representative.source_item.filename,
+                parent_path=str(
+                    PurePosixPath(representative.source_item.relative_path).parent
+                ),
+                parsed=representative_parsed,
+                group_files=tuple(
+                    media_match.source_item.relative_path
+                    for media_match in matches
+                ),
+            )
+        )
+        candidates = list(resolution.candidates)
+        decision, confidence = decide_match(
+            candidates=candidates,
+            auto_threshold=read_config_float(
+                job.config,
+                "auto_approve_threshold",
+                0.9,
+            ),
+            review_threshold=read_config_float(
+                job.config,
+                "review_threshold",
+                0.65,
+            ),
+        )
+        if (
+            resolution.requires_manual_confirmation
+            or not job.config.get("auto_approve_enabled", True)
+        ) and candidates:
+            decision = MatchDecision.REVIEW
+        top_candidate = candidates[0] if candidates else None
+        entity = (
+            await persist_metadata_candidate(session, top_candidate)
+            if top_candidate is not None
+            else None
+        )
+        for media_match in matches:
+            parsed = parse_media_filename(
+                media_match.source_item.filename,
+                parent_path=str(
+                    PurePosixPath(media_match.source_item.source_path).parent
+                ),
+                source_root=job.source_directory_path,
+            )
+            if media_match.episode_numbers:
+                parsed = replace(
+                    parsed,
+                    media_type=media_match.media_type,
+                    season_number=media_match.season_number,
+                    episode_numbers=tuple(media_match.episode_numbers),
+                )
+            parsed = _merge_manual_group_context(parsed, resolution.parsed)
+            media_match.media_entity_id = entity.id if entity is not None else None
+            media_match.media_type = parsed.media_type
+            media_match.parsed_title = parsed.title
+            media_match.parsed_year = parsed.year
+            media_match.confidence = confidence
+            media_match.decision = decision
+            media_match.candidates = [
+                candidate_to_dict(candidate) for candidate in candidates
+            ]
+            media_match.reason_codes = list(
+                dict.fromkeys(
+                    (*parsed.reason_codes, "MEDIA_GROUP_RETRIED")
+                )
+            )
+            media_match.target_path = (
+                target_path_for(
+                    parsed,
+                    top_candidate,
+                    media_match.source_item.extension,
+                    episode_title=media_match.episode_title,
+                )
+                if top_candidate is not None
+                else ""
+            )
+        session.add(
+            AuditEvent(
+                job_id=job_id,
+                event_type="MEDIA_GROUP_RETRIED",
+                message=f"重新识别影视分组，共 {len(matches)} 条记录",
+                severity="warning" if not candidates else "info",
+            )
+        )
+        await session.commit()
+        await self._refresh_job_readiness(session, job_id)
+        return len(matches)
+
     async def apply_manual_match(
         self,
         *,
@@ -376,28 +517,56 @@ class OrganizerService:
             job_id=job_id,
             match_id=match_id,
         )
-        candidate = MetadataCandidate(
-            tmdb_id=request.tmdb_id,
-            title=request.title,
-            original_title=request.original_title or request.title,
-            year=request.year,
-            media_type=request.media_type,
-            score=1,
-            poster_url=None,
-            backdrop_url=None,
-            overview="",
+        candidate = await self._resolve_manual_candidate(request)
+        season_number, episode_numbers = _manual_episode_mapping(
+            media_match,
+            request,
         )
         entity = await persist_metadata_candidate(session, candidate)
-        entity.title = request.title
-        entity.original_title = request.original_title or request.title
-        entity.year = request.year
         media_match.media_entity_id = entity.id
         media_match.media_type = request.media_type
-        media_match.parsed_title = request.title
-        media_match.parsed_year = request.year
+        media_match.parsed_title = candidate.title
+        media_match.parsed_year = candidate.year
+        media_match.season_number = season_number
+        media_match.episode_numbers = list(episode_numbers)
         media_match.confidence = 1
         media_match.decision = MatchDecision.APPROVED
         media_match.candidates = [candidate_to_dict(candidate)]
+        await session.execute(
+            delete(MediaMatchEpisode).where(
+                MediaMatchEpisode.media_match_id == media_match.id
+            )
+        )
+        media_match.episode_title = ""
+        if request.media_type == MediaType.TV:
+            if season_number is None or not episode_numbers:
+                raise OrganizerError("电视剧手动匹配必须填写季号和集号")
+            try:
+                season_metadata = await self._tmdb_service.get_tv_season(
+                    request.tmdb_id,
+                    season_number,
+                )
+            except MetadataServiceError:
+                season_metadata = None
+            _, episodes = await _persist_season_metadata(
+                session,
+                entity.id,
+                season_number,
+                episode_numbers,
+                season_metadata,
+            )
+            media_match.episode_title = " / ".join(
+                episode.name for episode in episodes if episode.name
+            )
+            await session.flush()
+            session.add_all(
+                MediaMatchEpisode(
+                    media_match_id=media_match.id,
+                    media_episode_id=episode.id,
+                    ordinal=ordinal,
+                )
+                for ordinal, episode in enumerate(episodes)
+            )
         media_match.target_path = _target_path_for_candidate(
             media_match,
             validate_candidate(candidate_to_dict(candidate)),
@@ -413,6 +582,110 @@ class OrganizerService:
         await session.commit()
         await self._refresh_job_readiness(session, job_id)
         return media_match
+
+    async def preview_manual_match(
+        self,
+        *,
+        job_id: str,
+        match_id: str,
+        request: ManualMatchRequest,
+        session: AsyncSession,
+    ) -> ManualMatchPreview:
+        media_match, job = await self._load_editable_match(
+            session=session,
+            job_id=job_id,
+            match_id=match_id,
+        )
+        candidate = await self._resolve_manual_candidate(request)
+        season_number, episode_numbers = _manual_episode_mapping(
+            media_match,
+            request,
+        )
+        parsed = parse_media_filename(
+            media_match.source_item.filename,
+            parent_path=str(PurePosixPath(media_match.source_item.source_path).parent),
+            source_root=job.source_directory_path,
+        )
+        parsed = replace(
+            parsed,
+            media_type=request.media_type,
+            title=candidate.title,
+            year=candidate.year,
+            season_number=season_number,
+            episode_numbers=episode_numbers,
+        )
+        missing_episode_numbers: list[int] = []
+        episode_title = ""
+        if request.media_type == MediaType.TV:
+            if season_number is None or not episode_numbers:
+                raise OrganizerError("电视剧手动匹配必须填写季号和集号")
+            try:
+                season_metadata = await self._tmdb_service.get_tv_season(
+                    request.tmdb_id,
+                    season_number,
+                )
+            except MetadataServiceError:
+                season_metadata = None
+            metadata_by_number = (
+                {
+                    episode.episode_number: episode
+                    for episode in season_metadata.episodes
+                }
+                if season_metadata is not None
+                else {}
+            )
+            missing_episode_numbers = [
+                number for number in episode_numbers if number not in metadata_by_number
+            ]
+            episode_title = " / ".join(
+                metadata_by_number[number].name
+                for number in episode_numbers
+                if number in metadata_by_number and metadata_by_number[number].name
+            )
+        return ManualMatchPreview(
+            tmdb_id=candidate.tmdb_id,
+            title=candidate.title,
+            year=candidate.year,
+            media_type=candidate.media_type,
+            season_number=season_number,
+            episode_numbers=list(episode_numbers),
+            missing_episode_numbers=missing_episode_numbers,
+            target_path=target_path_for(
+                parsed,
+                candidate,
+                media_match.source_item.extension,
+                episode_title=episode_title,
+            ),
+        )
+
+    async def _resolve_manual_candidate(
+        self,
+        request: ManualMatchRequest,
+    ) -> MetadataCandidate:
+        try:
+            canonical_candidate = await self._tmdb_service.get_candidate(
+                tmdb_id=request.tmdb_id,
+                media_type=request.media_type,
+            )
+        except MetadataServiceError as error:
+            if not request.title:
+                raise OrganizerError("无法读取 TMDB 条目，请稍后重试") from error
+            canonical_candidate = None
+        if canonical_candidate is not None:
+            return canonical_candidate
+        if not request.title:
+            raise OrganizerError("TMDB 条目不存在，且未提供兼容标题")
+        return MetadataCandidate(
+            tmdb_id=request.tmdb_id,
+            title=request.title,
+            original_title=request.original_title or request.title,
+            year=request.year,
+            media_type=request.media_type,
+            score=1,
+            poster_url=None,
+            backdrop_url=None,
+            overview="",
+        )
 
     async def request_cancel(self, job: OrganizeJob, session: AsyncSession) -> OrganizeJob:
         if job.status in {
@@ -521,4 +794,45 @@ def _target_path_for_candidate(media_match: MediaMatch, candidate: MatchCandidat
             extension=media_match.source_item.extension,
             episode_title=media_match.episode_title,
         )
+    )
+
+
+def _manual_episode_mapping(
+    media_match: MediaMatch,
+    request: ManualMatchRequest,
+) -> tuple[int | None, tuple[int, ...]]:
+    if request.media_type != MediaType.TV:
+        return None, ()
+    season_number = (
+        request.season_number
+        if request.season_number is not None
+        else media_match.season_number
+    )
+    episode_numbers = tuple(
+        dict.fromkeys(request.episode_numbers or media_match.episode_numbers)
+    )
+    if any(number <= 0 for number in episode_numbers):
+        raise OrganizerError("集号必须是正整数")
+    return season_number, episode_numbers
+
+
+def _merge_manual_group_context(
+    parsed: ParsedMediaName,
+    group_recognition: ParsedMediaName,
+) -> ParsedMediaName:
+    return replace(
+        parsed,
+        media_type=group_recognition.media_type,
+        title=group_recognition.title,
+        year=group_recognition.year or parsed.year,
+        confidence=max(parsed.confidence, group_recognition.confidence),
+        reason_codes=tuple(
+            dict.fromkeys(
+                (
+                    *parsed.reason_codes,
+                    *group_recognition.reason_codes,
+                    "GROUP_CONTEXT_REUSED",
+                )
+            )
+        ),
     )

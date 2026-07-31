@@ -205,17 +205,14 @@ class ScanWorkflow:
         await session.commit()
         await self._prefetch_group_metadata(
             job,
-            media_nodes,
+            pending_records,
             recognition_cache,
             candidate_cache,
         )
         if await _is_cancel_requested(session, job.id):
             await _cancel_scan(session, job)
             return
-        group_seasons = _group_season_numbers(
-            media_nodes,
-            job.source_directory_path,
-        )
+        group_seasons = _group_season_numbers(pending_records)
         for item_number, pending_record in enumerate(
             pending_records,
             start=1,
@@ -252,34 +249,33 @@ class ScanWorkflow:
     async def _prefetch_group_metadata(
         self,
         job: OrganizeJob,
-        media_nodes: list[CloudNode],
+        pending_records: list[PendingMediaRecord],
         recognition_cache: dict[str, ParsedMediaName],
         candidate_cache: dict[str, list[MetadataCandidate]],
     ) -> None:
-        representatives: dict[str, tuple[CloudNode, ParsedMediaName]] = {}
-        for cloud_node in media_nodes:
-            parent_path = str(PurePosixPath(cloud_node.path).parent)
-            parsed = parse_media_filename(
-                cloud_node.name,
-                parent_path=parent_path,
-                source_root=job.source_directory_path,
-            )
-            representatives.setdefault(
-                _group_key(parsed, parent_path),
-                (cloud_node, parsed),
-            )
+        records_by_group: dict[str, list[PendingMediaRecord]] = {}
+        for pending_record in pending_records:
+            records_by_group.setdefault(pending_record.group_key, []).append(pending_record)
 
-        group_keys = tuple(representatives)
+        group_keys = tuple(records_by_group)
         resolutions = await asyncio.gather(
             *(
                 self._metadata_resolver.resolve(
                     MetadataResolutionRequest(
-                        filename=representatives[group_key][0].name,
+                        filename=records_by_group[group_key][0].cloud_node.name,
                         parent_path=_relative_path(
-                            str(PurePosixPath(representatives[group_key][0].path).parent),
+                            str(
+                                PurePosixPath(
+                                    records_by_group[group_key][0].cloud_node.path
+                                ).parent
+                            ),
                             job.source_directory_path,
                         ),
-                        parsed=representatives[group_key][1],
+                        parsed=records_by_group[group_key][0].parsed,
+                        group_files=tuple(
+                            record.source_item.relative_path
+                            for record in records_by_group[group_key]
+                        ),
                     )
                 )
                 for group_key in group_keys
@@ -706,20 +702,15 @@ def _group_key(parsed: ParsedMediaName, parent_path: str) -> str:
 
 
 def _group_season_numbers(
-    media_nodes: list[CloudNode], source_root: str
+    pending_records: list[PendingMediaRecord],
 ) -> dict[str, frozenset[int]]:
     seasons_by_group: dict[str, set[int]] = {}
-    for cloud_node in media_nodes:
-        parent_path = str(PurePosixPath(cloud_node.path).parent)
-        parsed = parse_media_filename(
-            cloud_node.name,
-            parent_path=parent_path,
-            source_root=source_root,
-        )
-        if parsed.season_number is None:
+    for pending_record in pending_records:
+        if pending_record.parsed.season_number is None:
             continue
-        group_key = _group_key(parsed, parent_path)
-        seasons_by_group.setdefault(group_key, set()).add(parsed.season_number)
+        seasons_by_group.setdefault(pending_record.group_key, set()).add(
+            pending_record.parsed.season_number
+        )
     return {
         group_key: frozenset(season_numbers)
         for group_key, season_numbers in seasons_by_group.items()

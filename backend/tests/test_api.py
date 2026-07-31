@@ -33,8 +33,27 @@ def test_lists_demo_cloud_directories() -> None:
         response = client.get("/api/cloud/directories")
 
     assert response.status_code == 200
-    directory_names = {directory["name"] for directory in response.json()}
+    directories = response.json()
+    directory_names = {directory["name"] for directory in directories}
     assert {"未整理", "电影与剧集"}.issubset(directory_names)
+    source_directory = next(
+        directory for directory in directories if directory["name"] == "未整理"
+    )
+    assert source_directory["item_count"] >= 2
+
+
+def test_searches_tmdb_for_manual_matching() -> None:
+    with TestClient(app) as client:
+        client.post("/api/session/login", json={"password": "change-me"})
+        job_id = client.get("/api/jobs").json()[0]["id"]
+
+        response = client.get(
+            f"/api/jobs/{job_id}/tmdb/search",
+            params={"q": "三体", "media_type": "TV"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()[0]["media_type"] == "TV"
 
 
 def test_saves_settings_without_echoing_secrets() -> None:
@@ -206,6 +225,10 @@ def test_manually_assigns_match_when_automatic_candidates_are_unusable() -> None
                 "media_type": "MOVIE",
             },
         )
+        client.put(
+            f"/api/jobs/{review_job['id']}/matches/{media_match['id']}",
+            json={"decision": "UNRESOLVED"},
+        )
 
     assert response.status_code == 200
     payload = response.json()
@@ -213,6 +236,52 @@ def test_manually_assigns_match_when_automatic_candidates_are_unusable() -> None
     assert payload["selected_tmdb_id"] == 987654
     assert "MANUAL_MATCH" in payload["reason_codes"]
     assert payload["target_path"].startswith("Movies/手动匹配电影 (2022)/")
+
+
+def test_previews_and_assigns_a_manual_tv_episode_mapping() -> None:
+    with TestClient(app) as client:
+        client.post("/api/session/login", json={"password": "change-me"})
+        jobs = client.get("/api/jobs").json()
+        review_job = next(job for job in jobs if job["status"] == "REVIEW_REQUIRED")
+        matches = client.get(f"/api/jobs/{review_job['id']}/matches").json()["items"]
+        media_match = next(item for item in matches if "三体" in item["filename"])
+        original_decision = media_match["decision"]
+        original_candidate_id = media_match["selected_tmdb_id"]
+        if original_candidate_id is None and media_match["candidates"]:
+            original_candidate_id = media_match["candidates"][0]["tmdb_id"]
+        manual_payload = {
+            "tmdb_id": 1396,
+            "title": "三体",
+            "original_title": "Three-Body",
+            "year": 2023,
+            "media_type": "TV",
+            "season_number": 1,
+            "episode_numbers": [3],
+        }
+
+        preview_response = client.post(
+            f"/api/jobs/{review_job['id']}/matches/{media_match['id']}/manual/preview",
+            json=manual_payload,
+        )
+        assign_response = client.post(
+            f"/api/jobs/{review_job['id']}/matches/{media_match['id']}/manual",
+            json=manual_payload,
+        )
+        restore_payload = {"decision": original_decision}
+        if original_candidate_id is not None:
+            restore_payload["candidate_tmdb_id"] = original_candidate_id
+        client.put(
+            f"/api/jobs/{review_job['id']}/matches/{media_match['id']}",
+            json=restore_payload,
+        )
+
+    assert preview_response.status_code == 200
+    assert "S01E03" in preview_response.json()["target_path"]
+    assert assign_response.status_code == 200
+    assigned_match = assign_response.json()
+    assert assigned_match["season_number"] == 1
+    assert assigned_match["episode_numbers"] == [3]
+    assert "S01E03" in assigned_match["target_path"]
 
 
 def test_cancels_draft_job_immediately() -> None:

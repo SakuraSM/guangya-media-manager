@@ -83,6 +83,7 @@ def parse_media_filename(
     *,
     parent_path: str = "",
     source_root: str = "",
+    inferred_season_number: int | None = None,
 ) -> ParsedMediaName:
     stem = Path(filename).stem
     normalized = SPACE_PATTERN.sub(" ", SEPARATOR_PATTERN.sub(" ", stem)).strip()
@@ -98,9 +99,12 @@ def parse_media_filename(
             first_episode = int(episode_only)
     context = _parse_directory_context(parent_path, source_root)
     bare_episode_match = BARE_EPISODE_PATTERN.fullmatch(normalized)
-    if episode_match is None and bare_episode_match and context.season_number is not None:
+    resolved_context_season = context.season_number
+    if resolved_context_season is None:
+        resolved_context_season = inferred_season_number
+    if episode_match is None and bare_episode_match and resolved_context_season is not None:
         first_episode = int(bare_episode_match.group("start"))
-        season_number = context.season_number
+        season_number = resolved_context_season
     episode_numbers = _extract_episode_numbers(normalized, first_episode)
     episode_date = _parse_episode_date(normalized)
     is_tv = episode_match is not None or first_episode is not None or episode_date is not None
@@ -131,9 +135,13 @@ def parse_media_filename(
     if episode_match is not None:
         confidence += 0.25
         reason_codes.append("EPISODE_PARSED")
-    elif first_episode is not None and context.season_number is not None:
+    elif first_episode is not None and resolved_context_season is not None:
         confidence += 0.3
         reason_codes.extend(("DIRECTORY_CONTEXT", "EPISODE_PARSED"))
+        if inferred_season_number is not None and context.season_number is None:
+            reason_codes.extend(
+                ("DIRECTORY_SEQUENCE_INFERRED", "PARENT_DIRECTORY_TITLE")
+            )
     elif episode_date is not None:
         confidence += 0.2
         reason_codes.append("DATE_EPISODE_PARSED")
@@ -159,6 +167,24 @@ def parse_media_filename(
         part_number=part_number,
         context_group=context.title,
     )
+
+
+def parse_bare_episode_numbers(filename: str) -> tuple[int, ...]:
+    normalized = SPACE_PATTERN.sub(
+        " ",
+        SEPARATOR_PATTERN.sub(" ", Path(filename).stem),
+    ).strip()
+    match = BARE_EPISODE_PATTERN.fullmatch(normalized)
+    if match is None:
+        return ()
+    start = int(match.group("start"))
+    end_value = match.group("end")
+    if end_value is None:
+        return (start,)
+    end = int(end_value)
+    if end < start or end - start > 20:
+        return ()
+    return tuple(range(start, end + 1))
 
 
 @dataclass(frozen=True, slots=True)

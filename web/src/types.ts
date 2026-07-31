@@ -71,7 +71,7 @@ export interface CloudDirectory {
   parent_id: string
   name: string
   path: string
-  item_count: number
+  item_count: number | null
 }
 
 export interface CloudLoginStart {
@@ -173,6 +173,34 @@ export interface ManualMatchInput {
   originalTitle: string
   year: number | null
   mediaType: MediaType
+  seasonNumber: number | null
+  episodeNumbers: number[]
+}
+
+export interface TmdbSeasonSummary {
+  season_number: number
+  name: string
+  episode_count: number
+  poster_url: string | null
+}
+
+export interface TmdbEpisodeSummary {
+  episode_number: number
+  name: string
+  overview: string
+  air_date: string | null
+  still_url: string | null
+}
+
+export interface ManualMatchPreview {
+  tmdb_id: number
+  title: string
+  year: number | null
+  media_type: MediaType
+  season_number: number | null
+  episode_numbers: number[]
+  missing_episode_numbers: number[]
+  target_path: string
 }
 
 export interface BatchMatchApprovalInput {

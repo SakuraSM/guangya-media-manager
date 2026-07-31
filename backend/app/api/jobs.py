@@ -1,6 +1,7 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator, Sequence
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -13,6 +14,7 @@ from app.database import SessionFactory
 from app.domain import (
     JobStatus,
     MatchDecision,
+    MediaType,
     OperationStatus,
     OperationType,
     SourceAction,
@@ -31,18 +33,23 @@ from app.schemas import (
     CreateJobRequest,
     JobPage,
     JobView,
+    ManualMatchPreview,
     ManualMatchRequest,
     MatchCandidate,
     MediaGroupUpdateResult,
     MediaMatchPage,
     MediaMatchView,
     SourceItemView,
+    TmdbEpisodeSummary,
+    TmdbSeasonSummary,
     UpdateMatchRequest,
     UpdateMediaGroupRequest,
     UpdateSourceItemRequest,
 )
 from app.security import require_admin_session
+from app.services.metadata import MetadataServiceError
 from app.services.organizer import OrganizerError
+from app.services.organizer_support import candidate_to_dict
 
 router = APIRouter(
     prefix="/jobs",
@@ -205,6 +212,103 @@ async def list_source_items(
     return [_to_source_item_view(item) for item in items]
 
 
+@router.get("/{job_id}/tmdb/search", response_model=list[MatchCandidate])
+async def search_tmdb(
+    job_id: str,
+    session: DatabaseSession,
+    services: Services,
+    q: Annotated[str, Query(min_length=1, max_length=160)],
+    media_type: Annotated[MediaType, Query()] = MediaType.TV,
+    year: Annotated[int | None, Query(ge=1870, le=2100)] = None,
+) -> list[MatchCandidate]:
+    await _get_job_or_404(session, job_id)
+    if media_type == MediaType.UNKNOWN:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="TMDB 搜索类型必须是电影或电视剧",
+        )
+    try:
+        candidates = await services.tmdb_service.search_query(
+            query=q,
+            media_type=media_type,
+            year=year,
+        )
+    except MetadataServiceError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"TMDB 搜索失败：{error.reason_code}",
+        ) from error
+    return [
+        MatchCandidate.model_validate(candidate_to_dict(candidate))
+        for candidate in candidates
+    ]
+
+
+@router.get(
+    "/{job_id}/tmdb/tv/{tmdb_id}/seasons",
+    response_model=list[TmdbSeasonSummary],
+)
+async def list_tmdb_seasons(
+    job_id: str,
+    tmdb_id: int,
+    session: DatabaseSession,
+    services: Services,
+) -> list[TmdbSeasonSummary]:
+    await _get_job_or_404(session, job_id)
+    try:
+        seasons = await services.tmdb_service.get_tv_seasons(tmdb_id)
+    except MetadataServiceError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"TMDB 季度读取失败：{error.reason_code}",
+        ) from error
+    return [
+        TmdbSeasonSummary(
+            season_number=season.season_number,
+            name=season.name,
+            episode_count=season.episode_count,
+            poster_url=season.poster_url,
+        )
+        for season in seasons
+    ]
+
+
+@router.get(
+    "/{job_id}/tmdb/tv/{tmdb_id}/seasons/{season_number}",
+    response_model=list[TmdbEpisodeSummary],
+)
+async def list_tmdb_episodes(
+    job_id: str,
+    tmdb_id: int,
+    season_number: int,
+    session: DatabaseSession,
+    services: Services,
+) -> list[TmdbEpisodeSummary]:
+    await _get_job_or_404(session, job_id)
+    try:
+        season = await services.tmdb_service.get_tv_season(
+            tmdb_id,
+            season_number,
+        )
+    except MetadataServiceError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"TMDB 剧集读取失败：{error.reason_code}",
+        ) from error
+    if season is None:
+        return []
+    return [
+        TmdbEpisodeSummary(
+            episode_number=episode.episode_number,
+            name=episode.name,
+            overview=episode.overview,
+            air_date=episode.air_date,
+            still_url=episode.still_url,
+        )
+        for episode in season.episodes
+    ]
+
+
 @router.put("/{job_id}/items/{item_id}", response_model=SourceItemView)
 async def update_source_item(
     job_id: str,
@@ -279,6 +383,30 @@ async def update_media_group(
     except OrganizerError as error:
         raise _organizer_http_error(error) from error
     await _enqueue_auto_execute_if_ready(job_id, session, services)
+    return MediaGroupUpdateResult(
+        group_key=group_key,
+        updated_items=updated_items,
+    )
+
+
+@router.post(
+    "/{job_id}/groups/{group_key:path}/retry",
+    response_model=MediaGroupUpdateResult,
+)
+async def retry_media_group(
+    job_id: str,
+    group_key: str,
+    session: DatabaseSession,
+    services: Services,
+) -> MediaGroupUpdateResult:
+    try:
+        updated_items = await services.organizer.retry_group(
+            job_id=job_id,
+            group_key=group_key,
+            session=session,
+        )
+    except OrganizerError as error:
+        raise _organizer_http_error(error) from error
     return MediaGroupUpdateResult(
         group_key=group_key,
         updated_items=updated_items,
@@ -372,6 +500,28 @@ async def assign_manual_match(
         raise _organizer_http_error(error) from error
     await _enqueue_auto_execute_if_ready(job_id, session, services)
     return await _load_match_view(session, media_match.id)
+
+
+@router.post(
+    "/{job_id}/matches/{match_id}/manual/preview",
+    response_model=ManualMatchPreview,
+)
+async def preview_manual_match(
+    job_id: str,
+    match_id: str,
+    request: ManualMatchRequest,
+    session: DatabaseSession,
+    services: Services,
+) -> ManualMatchPreview:
+    try:
+        return await services.organizer.preview_manual_match(
+            job_id=job_id,
+            match_id=match_id,
+            request=request,
+            session=session,
+        )
+    except OrganizerError as error:
+        raise _organizer_http_error(error) from error
 
 
 async def _load_match_view(session: AsyncSession, match_id: str) -> MediaMatchView:

@@ -1,5 +1,5 @@
 import { LoaderCircle } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import { AUTO_APPROVE_THRESHOLD, REVIEW_THRESHOLD } from '@/constants'
 import type { MediaMatch } from '@/types'
 import { formatConfidence } from '@/utils/format'
@@ -38,12 +38,47 @@ export function GroupedMatchTable({
   onTogglePageSelection,
   leadingAction,
 }: GroupedMatchTableProps) {
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const visibleMatchKey = groups
+    .flatMap((group) => group.items)
+    .map((mediaMatch) => mediaMatch.id)
+    .join('|')
   const approvableMatches = groups
     .flatMap((group) => group.items)
     .filter(isBatchApprovableMatch)
   const areAllApprovableSelected =
     approvableMatches.length > 0 &&
     approvableMatches.every((mediaMatch) => selectedMatchIds.has(mediaMatch.id))
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport || !selectedMatchId) return
+    const selectedRow = Array.from(
+      viewport.querySelectorAll<HTMLElement>('[data-match-id]'),
+    ).find((row) => row.dataset.matchId === selectedMatchId)
+    if (!selectedRow) return
+
+    const viewportBounds = viewport.getBoundingClientRect()
+    const rowBounds = selectedRow.getBoundingClientRect()
+    let scrollOffset = 0
+    if (rowBounds.top < viewportBounds.top) {
+      scrollOffset = rowBounds.top - viewportBounds.top
+    } else if (rowBounds.bottom > viewportBounds.bottom) {
+      scrollOffset = rowBounds.bottom - viewportBounds.bottom
+    }
+    if (scrollOffset === 0) return
+
+    const shouldReduceMotion =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const behavior = shouldReduceMotion ? 'auto' : 'smooth'
+    const targetTop = viewport.scrollTop + scrollOffset
+    if (typeof viewport.scrollTo === 'function') {
+      viewport.scrollTo({ top: targetTop, behavior })
+      return
+    }
+    viewport.scrollTop = targetTop
+  }, [selectedMatchId, visibleMatchKey])
+
   return (
     <section className="flex h-full min-h-0 flex-col bg-card" aria-labelledby="match-table-title">
       <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b px-3">
@@ -62,7 +97,7 @@ export function GroupedMatchTable({
           选择本页可批准项
         </label>
       </div>
-      <ScrollArea className="min-h-0 flex-1">
+      <ScrollArea className="min-h-0 flex-1" viewportRef={viewportRef}>
         {groups.map((group) => (
           <section key={group.key}>
             <h3 className="sticky top-0 border-b bg-muted/70 px-4 py-2 text-xs font-medium backdrop-blur-sm">
@@ -112,6 +147,8 @@ function MatchRow({
   const isApprovable = isBatchApprovableMatch(mediaMatch)
   return (
     <div
+      data-match-id={mediaMatch.id}
+      aria-current={isSelected ? 'true' : undefined}
       className={cn(
         'grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 px-3 py-1 transition-colors',
         isSelected && 'bg-accent/70',
