@@ -49,6 +49,7 @@ interface ReviewWorkspaceProps {
   onRetry: () => void
   onRetryGroup: () => void
   onManualMatch: (match: ManualMatchInput) => void
+  onManualGroupMatch: (match: ManualMatchInput) => void
   onPageChange: (page: number) => void
   onPageSizeChange: (pageSize: number) => void
 }
@@ -98,6 +99,7 @@ export function ReviewWorkspace(props: ReviewWorkspaceProps) {
       onRetry={props.onRetry}
       onRetryGroup={props.onRetryGroup}
       onManualMatch={props.onManualMatch}
+      onManualGroupMatch={props.onManualGroupMatch}
     />
   )
 

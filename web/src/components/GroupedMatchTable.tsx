@@ -9,6 +9,7 @@ import {
   isBatchApprovableMatch,
   type MediaMatchGroup,
 } from '@/utils/reviewGrouping'
+import { OriginalFileInfo } from '@/components/OriginalFileInfo'
 import { Poster } from '@/components/Poster'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Badge } from '@/components/ui/badge'
@@ -162,7 +163,7 @@ function MatchRow({
       />
       <Button
         variant="ghost"
-        className="grid h-auto min-w-0 grid-cols-[auto_minmax(5.5rem,0.7fr)_minmax(8rem,1.2fr)_auto_auto] gap-3 rounded-none px-1 py-3 text-left"
+        className="grid h-auto min-w-0 grid-cols-[auto_minmax(8rem,0.9fr)_minmax(8rem,1.1fr)_auto_auto] gap-3 rounded-none px-1 py-3 text-left"
         type="button"
         onClick={() => onSelectMatch(mediaMatch)}
       >
@@ -172,9 +173,10 @@ function MatchRow({
         />
         <span className="min-w-0">
           <strong className="block truncate text-xs font-medium">{episodeLabel(mediaMatch)}</strong>
-          <small className="block truncate text-[0.68rem] text-muted-foreground">
-            {mediaMatch.filename}
-          </small>
+          <OriginalFileInfo
+            filename={mediaMatch.filename}
+            sourcePath={mediaMatch.source_path}
+          />
         </span>
         <span className="min-w-0">
           <strong className="block truncate text-xs font-medium">

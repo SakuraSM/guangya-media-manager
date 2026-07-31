@@ -1,0 +1,98 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import type { MediaMatch } from '@/types'
+import { ManualTmdbMatchForm } from './ManualTmdbMatchForm'
+
+vi.mock('@/api/client', () => ({
+  api: {
+    searchTmdb: vi.fn().mockResolvedValue([
+      {
+        tmdb_id: 42,
+        title: '纠正后的剧名',
+        original_title: 'Corrected Series',
+        year: 2026,
+        media_type: 'TV',
+        score: 1,
+        poster_url: null,
+        backdrop_url: null,
+        overview: '',
+      },
+    ]),
+    previewManualMatch: vi.fn().mockResolvedValue({
+      tmdb_id: 42,
+      title: '纠正后的剧名',
+      year: 2026,
+      media_type: 'TV',
+      season_number: 1,
+      episode_numbers: [1],
+      missing_episode_numbers: [],
+      target_path: 'TV/纠正后的剧名 (2026)/Season 01/纠正后的剧名 - S01E01.mkv',
+    }),
+    getTmdbSeasons: vi.fn().mockResolvedValue([]),
+    getTmdbEpisodes: vi.fn().mockResolvedValue([]),
+  },
+}))
+
+const MEDIA_MATCH: MediaMatch = {
+  id: 'match-1',
+  source_item_id: 'source-1',
+  filename: '01.mkv',
+  source_path: '/媒体/错误剧名/第1季/01.mkv',
+  size_bytes: 1024,
+  media_type: 'TV',
+  parsed_title: '错误剧名',
+  parsed_year: null,
+  season_number: 1,
+  episode_numbers: [1],
+  edition: '',
+  confidence: 0.4,
+  decision: 'REVIEW',
+  selected_tmdb_id: null,
+  candidates: [],
+  target_path: '',
+  reason_codes: [],
+  group_key: 'TV|错误剧名|',
+  episode_title: '',
+  episode_date: null,
+  release_info: {},
+}
+
+describe('ManualTmdbMatchForm', () => {
+  it('offers whole-series correction and keeps a current-file action', async () => {
+    const onSubmitCurrent = vi.fn()
+    const onSubmitGroup = vi.fn()
+
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: { queries: { retry: false } },
+          })
+        }
+      >
+        <ManualTmdbMatchForm
+          jobId="job-1"
+          mediaMatch={MEDIA_MATCH}
+          isSaving={false}
+          onSubmitCurrent={onSubmitCurrent}
+          onSubmitGroup={onSubmitGroup}
+        />
+      </QueryClientProvider>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '搜索并手动匹配 TMDB' }))
+    fireEvent.click(screen.getByRole('button', { name: '搜索 TMDB' }))
+    await screen.findByText('纠正后的剧名')
+    fireEvent.click(screen.getByRole('button', { name: '生成整理路径预览' }))
+    await screen.findByText('整理路径预览')
+
+    fireEvent.click(screen.getByRole('button', { name: '应用到整个剧集' }))
+    expect(onSubmitGroup).toHaveBeenCalledWith(
+      expect.objectContaining({ tmdbId: 42, seasonNumber: 1, episodeNumbers: [1] }),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '仅应用当前文件' }))
+    await waitFor(() => expect(onSubmitCurrent).toHaveBeenCalledOnce())
+  })
+})

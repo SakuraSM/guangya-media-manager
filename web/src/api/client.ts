@@ -76,6 +76,18 @@ interface AssignManualMatchInput extends MatchActionInput {
   match: ManualMatchInput
 }
 
+function manualMatchPayload(match: ManualMatchInput) {
+  return {
+    tmdb_id: match.tmdbId,
+    title: match.title,
+    original_title: match.originalTitle,
+    year: match.year,
+    media_type: match.mediaType,
+    season_number: match.seasonNumber,
+    episode_numbers: match.episodeNumbers,
+  }
+}
+
 interface SearchTmdbInput {
   jobId: string
   query: string
@@ -201,30 +213,22 @@ export const api = {
   assignManualMatch: ({ jobId, matchId, match }: AssignManualMatchInput) =>
     requestJson<MediaMatch>(`/jobs/${jobId}/matches/${matchId}/manual`, {
       method: 'POST',
-      body: JSON.stringify({
-        tmdb_id: match.tmdbId,
-        title: match.title,
-        original_title: match.originalTitle,
-        year: match.year,
-        media_type: match.mediaType,
-        season_number: match.seasonNumber,
-        episode_numbers: match.episodeNumbers,
-      }),
+      body: JSON.stringify(manualMatchPayload(match)),
     }),
+  assignManualGroupMatch: ({ jobId, matchId, match }: AssignManualMatchInput) =>
+    requestJson<{ group_key: string; updated_items: number }>(
+      `/jobs/${jobId}/matches/${matchId}/manual/group`,
+      {
+        method: 'POST',
+        body: JSON.stringify(manualMatchPayload(match)),
+      },
+    ),
   previewManualMatch: ({ jobId, matchId, match }: AssignManualMatchInput) =>
     requestJson<ManualMatchPreview>(
       `/jobs/${jobId}/matches/${matchId}/manual/preview`,
       {
         method: 'POST',
-        body: JSON.stringify({
-          tmdb_id: match.tmdbId,
-          title: match.title,
-          original_title: match.originalTitle,
-          year: match.year,
-          media_type: match.mediaType,
-          season_number: match.seasonNumber,
-          episode_numbers: match.episodeNumbers,
-        }),
+        body: JSON.stringify(manualMatchPayload(match)),
       },
     ),
   searchTmdb: ({ jobId, query, mediaType, year }: SearchTmdbInput) => {

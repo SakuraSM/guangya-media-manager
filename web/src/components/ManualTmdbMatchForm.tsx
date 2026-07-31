@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Check, ChevronDown, Search } from 'lucide-react'
+import { ChevronDown, Search } from 'lucide-react'
 import { api } from '@/api/client'
+import { ManualMatchSubmitActions } from '@/components/ManualMatchSubmitActions'
 import {
   TmdbSearchResults,
   TvEpisodeMappingFields,
@@ -40,14 +41,16 @@ interface ManualTmdbMatchFormProps {
   jobId: string
   mediaMatch: MediaMatch
   isSaving: boolean
-  onSubmit: (match: ManualMatchInput) => void
+  onSubmitCurrent: (match: ManualMatchInput) => void
+  onSubmitGroup: (match: ManualMatchInput) => void
 }
 
 export function ManualTmdbMatchForm({
   jobId,
   mediaMatch,
   isSaving,
-  onSubmit,
+  onSubmitCurrent,
+  onSubmitGroup,
 }: ManualTmdbMatchFormProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [query, setQuery] = useState(mediaMatch.parsed_title)
@@ -264,16 +267,14 @@ export function ManualTmdbMatchForm({
               </AlertDescription>
             </Alert>
           ) : null}
-          <Button
-            type="button"
-            disabled={!previewMutation.data || !currentInput || isSaving}
-            onClick={() => {
-              if (currentInput) onSubmit(currentInput)
-            }}
-          >
-            <Check data-icon="inline-start" aria-hidden="true" />
-            保存并采用手动匹配
-          </Button>
+          <ManualMatchSubmitActions
+            mediaType={selectedCandidate?.media_type ?? null}
+            input={currentInput}
+            isPreviewReady={Boolean(previewMutation.data)}
+            isSaving={isSaving}
+            onSubmitCurrent={onSubmitCurrent}
+            onSubmitGroup={onSubmitGroup}
+          />
         </div>
       </CollapsibleContent>
     </Collapsible>

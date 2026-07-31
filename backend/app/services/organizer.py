@@ -29,6 +29,7 @@ from app.services.metadata import (
     MetadataResolutionRequest,
     MetadataResolver,
     MetadataServiceError,
+    SeasonMetadata,
     TmdbService,
 )
 from app.services.naming import NamingInput, build_target_relative_path
@@ -583,6 +584,152 @@ class OrganizerService:
         await self._refresh_job_readiness(session, job_id)
         return media_match
 
+    async def apply_manual_group_match(
+        self,
+        *,
+        job_id: str,
+        match_id: str,
+        request: ManualMatchRequest,
+        session: AsyncSession,
+    ) -> tuple[str, int]:
+        anchor_match, job = await self._load_editable_match(
+            session=session,
+            job_id=job_id,
+            match_id=match_id,
+        )
+        if request.media_type != MediaType.TV:
+            raise OrganizerError("整组手动匹配仅适用于电视剧")
+        if not anchor_match.group_key:
+            raise OrganizerError("当前记录缺少影视分组，请重新扫描后再试")
+        matches = list(
+            (
+                await session.scalars(
+                    select(MediaMatch)
+                    .join(SourceItem)
+                    .options(selectinload(MediaMatch.source_item))
+                    .where(
+                        SourceItem.job_id == job_id,
+                        MediaMatch.group_key == anchor_match.group_key,
+                    )
+                    .order_by(SourceItem.relative_path.asc())
+                )
+            ).all()
+        )
+        if not matches:
+            raise OrganizerError("Media group not found")
+
+        candidate = await self._resolve_manual_candidate(request)
+        entity = await persist_metadata_candidate(session, candidate)
+        group_key = "|".join(
+            (
+                MediaType.TV.value,
+                candidate.title.casefold(),
+                str(candidate.year or ""),
+            )
+        )
+        season_cache: dict[int, SeasonMetadata | None] = {}
+        mapped_items = 0
+        for media_match in matches:
+            season_number, episode_numbers = _group_episode_mapping(
+                media_match=media_match,
+                anchor_match_id=match_id,
+                request=request,
+                source_root=job.source_directory_path,
+            )
+            media_match.media_entity_id = entity.id
+            media_match.media_type = MediaType.TV
+            media_match.parsed_title = candidate.title
+            media_match.parsed_year = candidate.year
+            media_match.group_key = group_key
+            media_match.source_item.group_key = group_key
+            media_match.confidence = 1
+            media_match.candidates = [candidate_to_dict(candidate)]
+            media_match.season_number = season_number
+            media_match.episode_numbers = list(episode_numbers)
+            media_match.episode_title = ""
+            await session.execute(
+                delete(MediaMatchEpisode).where(
+                    MediaMatchEpisode.media_match_id == media_match.id
+                )
+            )
+            if season_number is None or not episode_numbers:
+                media_match.decision = MatchDecision.REVIEW
+                media_match.target_path = ""
+                media_match.reason_codes = list(
+                    dict.fromkeys(
+                        (
+                            *media_match.reason_codes,
+                            "MANUAL_GROUP_MATCH",
+                            "EPISODE_MAPPING_REQUIRED",
+                        )
+                    )
+                )
+                continue
+
+            if season_number not in season_cache:
+                try:
+                    season_cache[season_number] = (
+                        await self._tmdb_service.get_tv_season(
+                            candidate.tmdb_id,
+                            season_number,
+                        )
+                    )
+                except MetadataServiceError:
+                    season_cache[season_number] = None
+            _, episodes = await _persist_season_metadata(
+                session,
+                entity.id,
+                season_number,
+                episode_numbers,
+                season_cache[season_number],
+            )
+            media_match.episode_title = " / ".join(
+                episode.name for episode in episodes if episode.name
+            )
+            media_match.decision = MatchDecision.APPROVED
+            media_match.target_path = _target_path_for_candidate(
+                media_match,
+                validate_candidate(candidate_to_dict(candidate)),
+            )
+            media_match.reason_codes = list(
+                dict.fromkeys(
+                    (
+                        *(
+                            code
+                            for code in media_match.reason_codes
+                            if code != "EPISODE_MAPPING_REQUIRED"
+                        ),
+                        "MANUAL_GROUP_MATCH",
+                    )
+                )
+            )
+            await session.flush()
+            session.add_all(
+                MediaMatchEpisode(
+                    media_match_id=media_match.id,
+                    media_episode_id=episode.id,
+                    ordinal=ordinal,
+                )
+                for ordinal, episode in enumerate(episodes)
+            )
+            mapped_items += 1
+
+        unresolved_items = len(matches) - mapped_items
+        session.add(
+            AuditEvent(
+                job_id=job_id,
+                event_type="MEDIA_GROUP_MANUALLY_ASSIGNED",
+                message=(
+                    f"手动纠正整部剧集，共更新 {len(matches)} 条记录，"
+                    f"{unresolved_items} 条需要补充季集编号"
+                ),
+                severity="warning" if unresolved_items else "info",
+            )
+        )
+        await session.commit()
+        await self._refresh_job_readiness(session, job_id)
+        return group_key, len(matches)
+
     async def preview_manual_match(
         self,
         *,
@@ -814,6 +961,25 @@ def _manual_episode_mapping(
     if any(number <= 0 for number in episode_numbers):
         raise OrganizerError("集号必须是正整数")
     return season_number, episode_numbers
+
+
+def _group_episode_mapping(
+    *,
+    media_match: MediaMatch,
+    anchor_match_id: str,
+    request: ManualMatchRequest,
+    source_root: str,
+) -> tuple[int | None, tuple[int, ...]]:
+    if media_match.id == anchor_match_id:
+        return _manual_episode_mapping(media_match, request)
+    if media_match.season_number is not None and media_match.episode_numbers:
+        return media_match.season_number, tuple(media_match.episode_numbers)
+    parsed = parse_media_filename(
+        media_match.source_item.filename,
+        parent_path=str(PurePosixPath(media_match.source_item.source_path).parent),
+        source_root=source_root,
+    )
+    return parsed.season_number, parsed.episode_numbers
 
 
 def _merge_manual_group_context(

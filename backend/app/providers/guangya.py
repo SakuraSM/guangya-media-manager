@@ -88,9 +88,14 @@ class GuangyaProvider:
         )
 
     async def refresh_tokens(self, refresh_token: str) -> LoginTokens:
-        response = _require_mapping(
-            await asyncio.to_thread(self._client.refresh_access_token, refresh_token)
-        )
+        try:
+            raw_response = await asyncio.to_thread(
+                self._client.refresh_access_token,
+                refresh_token,
+            )
+        except Exception as error:
+            raise GuangyaProviderError("Guangya token refresh failed") from error
+        response = _require_mapping(raw_response)
         return LoginTokens(
             access_token=_require_string(response, "access_token"),
             refresh_token=_require_string(response, "refresh_token"),

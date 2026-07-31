@@ -123,6 +123,18 @@ export function ReviewPage() {
       await refreshReviewData()
     },
   })
+  const manualGroupMatchMutation = useMutation({
+    mutationFn: ({ matchId, match }: { matchId: string; match: ManualMatchInput }) =>
+      api.assignManualGroupMatch({ jobId: selectedJobId, matchId, match }),
+    onSuccess: async (result) => {
+      setActionMessage(
+        `剧名和 TMDB 匹配已应用到整个剧集，共更新 ${result.updated_items} 条记录。`,
+      )
+      setSelectedMatchId(null)
+      setSelectedCandidateId(null)
+      await refreshReviewData()
+    },
+  })
   const executeMutation = useMutation({
     mutationFn: () => api.executeJob(selectedJobId),
     onSuccess: async (job) => {
@@ -201,6 +213,7 @@ export function ReviewPage() {
     retryMutation.error,
     groupRetryMutation.error,
     manualMatchMutation.error,
+    manualGroupMatchMutation.error,
     executeMutation.error,
     cancelMutation.error,
     groupUpdateMutation.error,
@@ -253,6 +266,11 @@ export function ReviewPage() {
       manualMatchMutation.mutate({ matchId: selectedMatch.id, match })
     }
   }
+  const handleManualGroupMatch = (match: ManualMatchInput) => {
+    if (selectedMatch) {
+      manualGroupMatchMutation.mutate({ matchId: selectedMatch.id, match })
+    }
+  }
 
   return (
     <div className="flex min-h-0 flex-col gap-3 lg:h-[calc(100svh-7rem)] lg:overflow-hidden">
@@ -299,6 +317,7 @@ export function ReviewPage() {
         isSaving={
           updateMutation.isPending ||
           manualMatchMutation.isPending ||
+          manualGroupMatchMutation.isPending ||
           batchApproval.isPending ||
           !isJobEditable
         }
@@ -313,6 +332,7 @@ export function ReviewPage() {
         onRetry={handleRetry}
         onRetryGroup={handleRetryGroup}
         onManualMatch={handleManualMatch}
+        onManualGroupMatch={handleManualGroupMatch}
         onPageChange={handlePageChange}
         onPageSizeChange={handlePageSizeChange}
       />

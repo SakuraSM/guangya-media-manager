@@ -49,6 +49,7 @@ describe('MatchInspector', () => {
           onRetry={handleRetry}
           onRetryGroup={vi.fn()}
           onManualMatch={handleManualMatch}
+          onManualGroupMatch={vi.fn()}
         />
       </QueryClientProvider>,
     )
@@ -57,6 +58,9 @@ describe('MatchInspector', () => {
     expect(
       screen.getByText('TMDB 请求失败，请检查网络或 API Token。'),
     ).toBeInTheDocument()
+    expect(screen.getByText('原始文件')).toBeVisible()
+    expect(screen.getAllByText(UNRESOLVED_MATCH.filename).length).toBeGreaterThan(0)
+    expect(screen.getByText(UNRESOLVED_MATCH.source_path)).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: '忽略此文件' }))
     fireEvent.click(screen.getByRole('button', { name: '重试此文件' }))
     fireEvent.click(screen.getByRole('button', { name: '搜索并手动匹配 TMDB' }))

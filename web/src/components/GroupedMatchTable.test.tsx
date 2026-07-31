@@ -63,6 +63,23 @@ describe('GroupedMatchTable', () => {
     expect(handleToggleSelection).toHaveBeenCalledWith('match-1')
   })
 
+  it('shows the original filename and source path for every record', () => {
+    render(
+      <GroupedMatchTable
+        groups={groupMediaMatches([APPROVABLE_MATCH])}
+        selectedMatchId={null}
+        selectedMatchIds={new Set()}
+        isSelectionEnabled
+        onSelectMatch={vi.fn()}
+        onToggleSelection={vi.fn()}
+        onTogglePageSelection={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText(APPROVABLE_MATCH.filename)).toBeVisible()
+    expect(screen.getByText(APPROVABLE_MATCH.source_path)).toBeVisible()
+  })
+
   it('shows a pending state for incrementally persisted rule results', () => {
     const pendingMatch: MediaMatch = {
       ...APPROVABLE_MATCH,

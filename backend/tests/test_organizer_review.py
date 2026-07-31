@@ -4,8 +4,12 @@ import pytest
 
 from app.domain import JobStatus, MatchDecision, MediaType
 from app.models import MediaMatch, OrganizeJob, SourceItem
-from app.schemas import UpdateMatchRequest
-from app.services.organizer import OrganizerError, OrganizerService
+from app.schemas import ManualMatchRequest, UpdateMatchRequest
+from app.services.organizer import (
+    OrganizerError,
+    OrganizerService,
+    _group_episode_mapping,
+)
 
 
 class ScalarResult:
@@ -54,6 +58,66 @@ async def test_group_update_validates_all_candidates_before_mutating(
     assert first_match.decision == MatchDecision.REVIEW
     assert second_match.decision == MatchDecision.REVIEW
     session.commit.assert_not_awaited()
+
+
+def test_group_manual_match_preserves_each_sibling_episode_mapping() -> None:
+    anchor = _match(
+        match_id="first",
+        filename="S01E01.mkv",
+        candidate_id=42,
+    )
+    anchor.season_number = 1
+    anchor.episode_numbers = [1]
+    sibling = _match(
+        match_id="second",
+        filename="S02E08.mkv",
+        candidate_id=42,
+    )
+    sibling.season_number = 2
+    sibling.episode_numbers = [8]
+    request = ManualMatchRequest(
+        tmdb_id=42,
+        title="纠正后的剧名",
+        media_type=MediaType.TV,
+        season_number=3,
+        episode_numbers=[6],
+    )
+
+    assert _group_episode_mapping(
+        media_match=anchor,
+        anchor_match_id=anchor.id,
+        request=request,
+        source_root="/媒体",
+    ) == (3, (6,))
+    assert _group_episode_mapping(
+        media_match=sibling,
+        anchor_match_id=anchor.id,
+        request=request,
+        source_root="/媒体",
+    ) == (2, (8,))
+
+
+def test_group_manual_match_reparses_missing_sibling_mapping() -> None:
+    sibling = _match(
+        match_id="second",
+        filename="Example.S01E09.mkv",
+        candidate_id=42,
+    )
+    sibling.source_item.source_path = "/媒体/示例剧/Season 01/Example.S01E09.mkv"
+    request = ManualMatchRequest(
+        tmdb_id=42,
+        title="示例剧",
+        media_type=MediaType.TV,
+        season_number=1,
+        episode_numbers=[1],
+    )
+
+    assert _group_episode_mapping(
+        media_match=sibling,
+        anchor_match_id="first",
+        request=request,
+        source_root="/媒体",
+    ) == (1, (9,))
 
 
 def _match(

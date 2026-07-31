@@ -10,6 +10,7 @@ import {
 import { Poster } from '@/components/Poster'
 import { RecognitionNotice } from '@/components/RecognitionNotice'
 import { ManualTmdbMatchForm } from '@/components/ManualTmdbMatchForm'
+import { OriginalFileInfo } from '@/components/OriginalFileInfo'
 import {
   MATCH_DECISION,
   type ManualMatchInput,
@@ -44,6 +45,7 @@ interface MatchInspectorProps {
   onRetry: () => void
   onRetryGroup: () => void
   onManualMatch: (match: ManualMatchInput) => void
+  onManualGroupMatch: (match: ManualMatchInput) => void
 }
 
 export function MatchInspector({
@@ -59,6 +61,7 @@ export function MatchInspector({
   onRetry,
   onRetryGroup,
   onManualMatch,
+  onManualGroupMatch,
 }: MatchInspectorProps) {
   if (!mediaMatch) {
     return (
@@ -91,6 +94,18 @@ export function MatchInspector({
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-4 p-4">
+          <section className="space-y-2" aria-labelledby="original-file-title">
+            <h3 id="original-file-title" className="text-sm font-medium">
+              原始文件
+            </h3>
+            <div className="rounded-lg border bg-muted/30 p-3">
+              <OriginalFileInfo
+                filename={mediaMatch.filename}
+                sourcePath={mediaMatch.source_path}
+                variant="detail"
+              />
+            </div>
+          </section>
           <RecognitionNotice mediaMatch={mediaMatch} />
           {mediaMatch.execution_error ? (
             <Alert variant="destructive">
@@ -148,7 +163,8 @@ export function MatchInspector({
             jobId={jobId}
             mediaMatch={mediaMatch}
             isSaving={isSaving}
-            onSubmit={onManualMatch}
+            onSubmitCurrent={onManualMatch}
+            onSubmitGroup={onManualGroupMatch}
           />
         </div>
       </ScrollArea>
