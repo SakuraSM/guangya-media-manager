@@ -5,100 +5,120 @@
 <h1 align="center">光鸭媒体管家</h1>
 
 <p align="center">
-  面向个人 NAS 的光鸭云盘影视识别、整理与刮削工具
+  整理光鸭云盘中的电影和电视剧，生成适用于 Plex、Jellyfin 的目录、海报与 NFO。
 </p>
 
 <p align="center">
-  <img src="./docs/assets/demo-dashboard.png" alt="光鸭媒体管家 Demo 看板">
+  <img src="./docs/assets/demo-dashboard.png" alt="光鸭媒体管家界面">
 </p>
 
-> Demo 图用于展示产品布局与视觉风格，实际数据以部署后的云盘账号和整理任务为准。
+> 光鸭云盘没有公开且稳定的开发者 API。本项目通过第三方 `guangyapan` 接入，接口变化可能导致登录或文件操作失效。
 
-通过第三方 `guangyapan` 包连接光鸭云盘，提供扫码授权、自动续期、递归扫描、规则/AI 识别、TMDB 审核、云内复制、字幕关联、NFO 与图片刮削、媒体库和实时任务看板。
+## 功能
 
-> 光鸭云盘没有公开、稳定的开发者 API。真实云盘能力由独立 `GuangyaProvider` 隔离，接口变化时可单独调整适配器。建议先在 `DEMO_MODE=true` 下完整验收。
+- 扫码登录光鸭云盘，自动续期并加密保存凭证。
+- 按目录识别电影、电视剧、季、集、字幕和附加内容。
+- 使用 TMDB 匹配元数据；无法确定时可人工搜索、修改或忽略。
+- 可选使用兼容 OpenAI API 的模型辅助识别，结果需要人工确认。
+- 批量审核后在云盘内复制、重命名并上传海报和 NFO。
+- 任务进度、失败原因、整理结果和媒体库统一在 Web 页面查看。
 
-## 已实现能力
+源目录不会被移动、重命名或删除。整理结果先写入目标目录中的 `_整理中`，完成后再移入正式目录。
 
-- 光鸭扫码授权，refresh token 加密落库；API 与 Worker 启动或执行任务前自动续期。
-- 任意层级云盘目录浏览，保留完整目录上下文；支持中文季目录、纯数字集名、多季合集、多集文件、日期节目和 `Season 00` 特辑。
-- 扫描项按媒体、字幕、附加内容、已有资源、过滤项和未知项分类；支持样片阈值、自定义 glob 排除和人工恢复附加内容。
-- 按影视分组优先查询 TMDB，仅在无候选或请求失败时调用 AI 兜底；所有 AI 辅助结果必须人工确认，单组失败原因逐条展示且不中断整个任务。
-- 规则解析结果按批次实时落库，TMDB/AI 元数据查询期间即可分页查看已解析记录和“识别中”状态，无需等待整个任务结束。
-- TMDB 剧、季、集元数据落库，审核页按“影视 → 季 → 集”展示并支持整组确认。
-- 匹配结果使用服务端分页；支持当前页勾选批量批准、整组批准、单文件重新识别、无候选时手动指定 TMDB 匹配、忽略后恢复以及任务安全取消。
-- Plex/Jellyfin/TRaSH 兼容的增强 `Movies/TV/Season` 命名，保留可识别的画质、片源、HDR、版本和发布组信息。
-- 参考 MoviePilot 的目录级刮削设计：按影视缓存 TMDB 详情，增强 NFO 字段，支持多语言元数据、TMDB 原图、`backdrop/fanart` 别名、季海报双位置和剧集缩略图。
-- 源目录零写入；媒体使用 `fs_copy` 云内复制，随后在暂存目录重命名。
-- NFO、海报、背景图和季度海报上传；字幕关联并跟随媒体重命名。
-- `_整理中/{jobId}` 暂存、任务轮询、幂等操作记录、重复指纹跳过、冲突保留。
-- PostgreSQL 数据落库、Redis Worker、SSE 事件、HttpOnly 管理员会话。
-- 暗色响应式 Web 控制台：总览、任务、匹配审核、媒体库和设置。
+## 部署
 
-## 架构
-
-```text
-React + TypeScript ──> FastAPI ──> PostgreSQL
-                           │
-                           └──> Redis ──> Python Worker
-                                             ├── GuangyaProvider
-                                             ├── TMDB
-                                             └── OpenAI-compatible AI
-```
-
-## Docker Compose 启动
+需要 Docker 和 Docker Compose v2。
 
 ```bash
 cp .env.example .env
-docker compose up --build
+docker compose up -d
 ```
 
-也可以直接使用 GitHub Container Registry 中由 CI 构建的多架构镜像：
+Compose 会从 GitHub Container Registry 拉取应用镜像。启动完成后访问：
 
-```bash
-cp .env.example .env
-docker compose -f docker-compose.yml -f docker-compose.images.yml up -d
-```
+- 本机：<http://127.0.0.1:4173>
+- NAS 局域网：将 `.env` 中的 `BIND_HOST` 和 `WEB_ORIGIN` 改为 NAS 的内网地址
 
-`IMAGE_TAG` 默认为 `latest`，正式部署建议固定到版本标签或 `sha-<commit>` 标签。后端镜像同时供 API 和 Worker 使用。
-
-API 容器启动时会自动执行 Alembic 增量迁移；已有账号、加密 Token、任务和操作记录会保留。
-
-- Web：<http://localhost:4173>
-- API 文档：<http://localhost:8000/docs>
-- 健康检查：<http://localhost:8000/healthz>
-- 默认管理员密码：`change-me`，部署前务必在 `.env` 中更换。
-- 默认仅绑定 `127.0.0.1`；需要从 NAS 局域网访问时，将 `BIND_HOST` 改为 NAS 的内网 IP，并同步调整 `WEB_ORIGIN`。
-
-初次使用保持 `DEMO_MODE=true`。确认页面与流程后，配置以下参数并改为 `false`：
+例如：
 
 ```dotenv
-ADMIN_PASSWORD=替换为强密码
 BIND_HOST=192.168.1.10
 WEB_ORIGIN=http://192.168.1.10:4173
-SESSION_SECRET=至少32位随机字符串
-TOKEN_ENCRYPTION_KEY=
+```
+
+API 只在 Compose 内部网络开放，由 Web 服务代理。
+
+### 连接真实云盘
+
+首次启动默认使用演示模式。连接真实账号前，至少修改：
+
+```dotenv
 DEMO_MODE=false
-TMDB_PROXY_URL=
-TMDB_API_TOKEN=你的TMDB读取令牌
+ADMIN_PASSWORD=替换为至少12位的密码
+SESSION_SECRET=替换为至少32位的随机字符串
+TMDB_API_TOKEN=你的TMDB凭证
+```
+
+`TMDB_API_TOKEN` 支持 TMDB v3 API Key 和 v4 Read Access Token。AI 识别不是必需功能；需要时再填写：
+
+```dotenv
 AI_BASE_URL=https://api.openai.com/v1
-AI_API_KEY=你的AI密钥
+AI_API_KEY=你的API密钥
 AI_MODEL=gpt-4.1-mini
 ```
 
-非演示模式会拒绝使用默认值或长度不足 12 位的 `ADMIN_PASSWORD`、`SESSION_SECRET`，避免误把开发凭据带入真实云盘部署。
+`TOKEN_ENCRYPTION_KEY` 可以留空，系统会从 `SESSION_SECRET` 派生加密密钥。
 
-`TOKEN_ENCRYPTION_KEY` 留空时会从 `SESSION_SECRET` 派生独立加密密钥；也可填入 Fernet 格式的 32 字节 URL-safe Base64 密钥。系统默认只应暴露在 NAS 内网。
+### TMDB 代理
 
-TMDB 同时支持 32 位 v3 API Key 和 v4 API Read Access Token。若任务显示
-`TMDB_TIMEOUT` 或 `TMDB_CONNECTION_FAILED`，请先确认 NAS 能正确解析并访问
-`api.themoviedb.org`。Docker 部署需要使用宿主机代理时，可在 `.env` 设置
-`TMDB_PROXY_URL=http://host.docker.internal:7890` 后重启 API 和 Worker；不要设置为
-`127.0.0.1:7890`，因为该地址在容器中指向容器自身。
+NAS 无法直接访问 TMDB 时，可使用宿主机代理：
+
+```dotenv
+TMDB_PROXY_URL=http://host.docker.internal:7890
+```
+
+修改后重启 API 和 Worker：
+
+```bash
+docker compose restart api worker
+```
+
+不要在容器配置中使用 `127.0.0.1:7890`，该地址指向容器自身。
+
+### 更新和维护
+
+```bash
+# 查看状态
+docker compose ps
+
+# 查看日志
+docker compose logs -f
+
+# 拉取并启动新镜像
+docker compose pull
+docker compose up -d
+
+# 停止服务，保留数据库和 Redis 数据
+docker compose down
+```
+
+`IMAGE_TAG` 默认为 `latest`。需要固定版本时，在 `.env` 中设置发布标签：
+
+```dotenv
+IMAGE_TAG=v0.1.3
+```
+
+应用启动时会自动执行数据库迁移。
 
 ## 本地开发
 
-后端：
+从源码构建全部容器：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up --build
+```
+
+分别启动后端和前端：
 
 ```bash
 cd backend
@@ -108,15 +128,13 @@ pip install -e ".[dev]"
 DEMO_MODE=true DATABASE_URL=sqlite+aiosqlite:///./media_manager.db uvicorn app.main:app --reload
 ```
 
-前端：
-
 ```bash
 cd web
 npm install
 npm run dev
 ```
 
-## 验证
+## 测试
 
 ```bash
 cd backend
@@ -136,20 +154,11 @@ npm run build
 python3 scripts/check-secrets.py
 ```
 
-GitHub Actions 会在 Pull Request、`main` 推送、`v*` 标签和手动触发时执行完整测试与隐私扫描。`main`、版本标签及手动触发会发布：
+## 安全说明
 
-- `ghcr.io/sakurasm/guangya-media-manager-backend`
-- `ghcr.io/sakurasm/guangya-media-manager-web`
-
-流水线只授予镜像发布任务 `packages: write` 权限，第三方 Action 均固定到不可变提交，并生成 SBOM 与构建来源证明。
-
-当前测试覆盖目录上下文与中英文季集解析、多集编号、样片/附加内容/系统文件过滤、AI 异常回退、字幕命名、非法字符、Token 加密、Provider 复制/移动契约、候选改选、设置密钥不回显，以及“审核 → 暂存复制 → 正式 Movies/TV 目录”的集成流程。
-
-## 安全边界
-
-- 不移动、重命名或删除源目录内容。
-- 同名且指纹不同的目标不覆盖，保留在暂存目录并标记部分失败。
-- 失败、取消和重复文件均不自动永久删除。
-- Token、TMDB Token 和 AI Key 不在 API 响应中回显。
-- AI 只接收低置信度文件名与父目录，不上传媒体内容。
-- 真实接口属于非官方适配；升级 `guangyapan` 后应先运行 Provider 契约测试。
+- 默认只监听 `127.0.0.1`；开放到局域网前请设置管理员密码。
+- 非演示模式拒绝默认密码和过短的会话密钥。
+- 同名但内容不同的目标文件不会被覆盖。
+- 失败或取消的任务不会自动删除暂存文件。
+- 云盘凭证、TMDB 凭证和 AI 密钥不会在前端接口中回显。
+- AI 只接收文件名和目录信息，不会上传媒体文件。

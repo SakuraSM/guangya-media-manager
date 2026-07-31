@@ -1,0 +1,15 @@
+services:
+  api:
+    image: guangya-media-manager-backend:local
+    build:
+      context: ./backend
+
+  worker:
+    image: guangya-media-manager-backend:local
+    build:
+      context: ./backend
+
+  web:
+    image: guangya-media-manager-web:local
+    build:
+      context: ./web

@@ -3,6 +3,7 @@ name: guangya-media-manager
 services:
   postgres:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: media_manager
       POSTGRES_USER: media_manager
@@ -17,6 +18,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     command: redis-server --appendonly yes
     volumes:
       - redis-data:/data
@@ -27,16 +29,14 @@ services:
       retries: 10
 
   api:
-    build:
-      context: ./backend
+    image: ghcr.io/sakurasm/guangya-media-manager-backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://media_manager:media_manager@postgres:5432/media_manager
       REDIS_URL: redis://redis:6379/0
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    ports:
-      - "${BIND_HOST:-127.0.0.1}:8000:8000"
     healthcheck:
       test:
         [
@@ -55,8 +55,7 @@ services:
         condition: service_healthy
 
   worker:
-    build:
-      context: ./backend
+    image: ghcr.io/sakurasm/guangya-media-manager-backend:${IMAGE_TAG:-latest}
     command: python -m app.worker
     restart: unless-stopped
     env_file: .env
@@ -74,8 +73,8 @@ services:
         condition: service_healthy
 
   web:
-    build:
-      context: ./web
+    image: ghcr.io/sakurasm/guangya-media-manager-web:${IMAGE_TAG:-latest}
+    restart: unless-stopped
     ports:
       - "${BIND_HOST:-127.0.0.1}:4173:80"
     depends_on:
