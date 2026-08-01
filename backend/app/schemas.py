@@ -8,6 +8,7 @@ from app.domain import (
     JobStatus,
     MatchDecision,
     MediaType,
+    MetadataSource,
     OperationStatus,
     SourceAction,
     SourceClassification,
@@ -144,6 +145,7 @@ class MediaMatchView(ApiModel):
     confidence: float
     decision: MatchDecision
     selected_tmdb_id: int | None
+    metadata_source: MetadataSource | None = None
     candidates: list[MatchCandidate]
     target_path: str
     reason_codes: list[str]
@@ -224,6 +226,12 @@ class ManualMatchRequest(BaseModel):
     )
 
 
+class LocalMetadataGroupRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=256)
+    year: int | None = Field(default=None, ge=1870, le=2100)
+    season_number: int = Field(default=1, ge=0, le=99)
+
+
 class TmdbSeasonSummary(BaseModel):
     season_number: int
     name: str
@@ -275,7 +283,8 @@ class DashboardView(BaseModel):
 
 class LibraryItem(BaseModel):
     id: str
-    tmdb_id: int
+    tmdb_id: int | None
+    metadata_source: MetadataSource = MetadataSource.TMDB
     title: str
     year: int | None
     media_type: MediaType

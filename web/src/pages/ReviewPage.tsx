@@ -9,7 +9,8 @@ import { ScanSummaryPanel } from '../components/ScanSummaryPanel'
 import { useBatchApproval } from '../hooks/useBatchApproval'
 import { useReviewQueries } from '../hooks/useReviewQueries'
 import {
-  JOB_STATUS, MATCH_DECISION, REVIEW_FILTER, type ManualMatchInput,
+  JOB_STATUS, MATCH_DECISION, REVIEW_FILTER, type LocalMetadataGroupInput,
+  type ManualMatchInput,
   type MatchDecision, type MediaMatch, type ReviewFilter, type SourceAction,
 } from '../types'
 import { groupMediaMatches, isEditableJobStatus, isReviewDecision } from '../utils/reviewGrouping'
@@ -139,6 +140,16 @@ export function ReviewPage() {
       await refreshReviewData()
     },
   })
+  const localGroupMatchMutation = useMutation({
+    mutationFn: ({ matchId, metadata }: { matchId: string; metadata: LocalMetadataGroupInput }) =>
+      api.assignLocalGroupMatch({ jobId: selectedJobId, matchId, metadata }),
+    onSuccess: async (result) => {
+      setActionMessage(`本地元数据已应用到整个剧集，共更新 ${result.updated_items} 条记录。`)
+      setSelectedMatchId(null)
+      setSelectedCandidateId(null)
+      await refreshReviewData()
+    },
+  })
   const executeMutation = useMutation({
     mutationFn: () => api.executeJob(selectedJobId),
     onSuccess: async (job) => {
@@ -227,6 +238,7 @@ export function ReviewPage() {
     groupRetryMutation.error,
     manualMatchMutation.error,
     manualGroupMatchMutation.error,
+    localGroupMatchMutation.error,
     executeMutation.error,
     cancelMutation.error,
     aiReviewMutation.error,
@@ -289,6 +301,11 @@ export function ReviewPage() {
       manualGroupMatchMutation.mutate({ matchId: selectedMatch.id, match })
     }
   }
+  const handleLocalGroupMatch = (metadata: LocalMetadataGroupInput) => {
+    if (selectedMatch) {
+      localGroupMatchMutation.mutate({ matchId: selectedMatch.id, metadata })
+    }
+  }
 
   return (
     <div className="flex min-h-0 flex-col gap-3 lg:h-[calc(100svh-7rem)] lg:overflow-hidden">
@@ -340,6 +357,7 @@ export function ReviewPage() {
           updateMutation.isPending ||
           manualMatchMutation.isPending ||
           manualGroupMatchMutation.isPending ||
+          localGroupMatchMutation.isPending ||
           batchApproval.isPending ||
           !isJobEditable
         }
@@ -356,6 +374,7 @@ export function ReviewPage() {
         onRetryGroup={handleRetryGroup}
         onManualMatch={handleManualMatch}
         onManualGroupMatch={handleManualGroupMatch}
+        onLocalGroupMatch={handleLocalGroupMatch}
         onPageChange={handlePageChange}
         onPageSizeChange={handlePageSizeChange}
       />

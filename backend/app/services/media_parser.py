@@ -50,6 +50,9 @@ EPISODE_RANGE_DESCRIPTOR_PATTERN = re.compile(
 )
 COLLECTION_SUFFIX_PATTERN = re.compile(r"(?i)\s+(?:全?\d+\s*-\s*\d+季|全\d+季|合集).*$")
 EPISODE_COUNT_PATTERN = re.compile(r"(?i)(?:全\s*)?\d+\s*集(?:全|完)?")
+SHORT_DRAMA_TAG_PATTERN = re.compile(
+    r"(?i)[\[【(（]\s*(?:微?短剧|竖屏(?:剧)?|完结|全集)\s*[\]】)）]"
+)
 SUBTITLE_DESCRIPTION_PATTERN = re.compile(
     r"(?i)(?:内嵌|内封|外挂)?\s*(?:简中|繁中|中字|中文字幕|双语)?\s*字幕"
 )
@@ -232,20 +235,37 @@ def _parse_directory_context(parent_path: str, source_root: str) -> DirectoryCon
     parts = list(parent.parts)
     if root is not None and parent.is_relative_to(root):
         parts = [root.name, *parent.relative_to(root).parts]
-    season_number: int | None = None
+    season_number: int | None = 0 if any(
+        _season_number_from_directory(
+            SPACE_PATTERN.sub(" ", SEPARATOR_PATTERN.sub(" ", part)).strip()
+        ) == 0
+        for part in parts
+    ) else None
     title = ""
     year: int | None = None
     for part in reversed(parts):
         normalized_part = SPACE_PATTERN.sub(" ", SEPARATOR_PATTERN.sub(" ", part)).strip()
         if season_number is None:
             season_number = _season_number_from_directory(normalized_part)
+            inferred_short_drama_season = season_number is None and bool(
+                SHORT_DRAMA_TAG_PATTERN.search(normalized_part)
+                or EPISODE_COUNT_PATTERN.search(normalized_part)
+            )
+            if inferred_short_drama_season:
+                season_number = 1
             if season_number is not None:
-                combined_title = _title_from_season_directory(normalized_part)
+                combined_title = (
+                    _clean_directory_title(normalized_part)
+                    if inferred_short_drama_season
+                    else _title_from_season_directory(normalized_part)
+                )
                 if combined_title:
                     title = combined_title
                 else:
                     continue
-        if _is_generic_directory(normalized_part):
+        if _is_generic_directory(normalized_part) or _season_number_from_directory(
+            normalized_part
+        ) == 0:
             continue
         if not title:
             title = _clean_directory_title(normalized_part)
@@ -284,9 +304,10 @@ def _title_from_season_directory(value: str) -> str:
 
 def _clean_directory_title(value: str) -> str:
     without_year = YEAR_PATTERN.sub("", value)
-    without_empty_brackets = EMPTY_BRACKETS_PATTERN.sub("", without_year)
-    without_episode_count = EPISODE_COUNT_PATTERN.sub("", without_empty_brackets)
-    without_subtitles = SUBTITLE_DESCRIPTION_PATTERN.sub("", without_episode_count)
+    without_short_drama_tags = SHORT_DRAMA_TAG_PATTERN.sub("", without_year)
+    without_episode_count = EPISODE_COUNT_PATTERN.sub("", without_short_drama_tags)
+    without_empty_brackets = EMPTY_BRACKETS_PATTERN.sub("", without_episode_count)
+    without_subtitles = SUBTITLE_DESCRIPTION_PATTERN.sub("", without_empty_brackets)
     without_collection = COLLECTION_SUFFIX_PATTERN.sub("", without_subtitles)
     without_quality = RELEASE_MARKERS.sub("", without_collection)
     without_episode_range = EPISODE_RANGE_DESCRIPTOR_PATTERN.sub(" ", without_quality)
@@ -299,7 +320,7 @@ def _clean_directory_title(value: str) -> str:
         r"(?i)\s*\+(?:电影|番外|特辑|movie).*$",
         without_release_group,
     )[0]
-    return _clean_title(title)
+    return _clean_title(EMPTY_BRACKETS_PATTERN.sub("", title))
 
 
 def _is_generic_directory(value: str) -> bool:

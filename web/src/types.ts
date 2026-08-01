@@ -42,6 +42,7 @@ export const REVIEW_FILTER = {
 
 export type ReviewFilter = (typeof REVIEW_FILTER)[keyof typeof REVIEW_FILTER]
 export type MediaType = 'MOVIE' | 'TV' | 'UNKNOWN'
+export type MetadataSource = 'TMDB' | 'LOCAL'
 
 export const SOURCE_CLASSIFICATION = {
   MEDIA: 'MEDIA',
@@ -153,6 +154,7 @@ export interface MediaMatch {
   confidence: number
   decision: MatchDecision
   selected_tmdb_id: number | null
+  metadata_source?: MetadataSource | null
   candidates: MatchCandidate[]
   target_path: string
   reason_codes: string[]
@@ -184,6 +186,12 @@ export interface ManualMatchInput {
   mediaType: MediaType
   seasonNumber: number | null
   episodeNumbers: number[]
+}
+
+export interface LocalMetadataGroupInput {
+  title: string
+  year: number | null
+  seasonNumber: number
 }
 
 export interface TmdbSeasonSummary {
@@ -257,7 +265,8 @@ export interface AuditEvent {
 
 export interface LibraryItem {
   id: string
-  tmdb_id: number
+  tmdb_id: number | null
+  metadata_source?: MetadataSource
   title: string
   year: number | null
   media_type: MediaType

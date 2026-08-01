@@ -29,6 +29,11 @@ class MediaType(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class MetadataSource(StrEnum):
+    TMDB = "TMDB"
+    LOCAL = "LOCAL"
+
+
 class SourceClassification(StrEnum):
     MEDIA = "MEDIA"
     SUBTITLE = "SUBTITLE"

@@ -58,7 +58,8 @@ export function ManualTmdbMatchForm({
     seasonNumber: mediaMatch.season_number,
     episodeNumbers: mediaMatch.episode_numbers,
   })
-  const [isOpen, setIsOpen] = useState(false)
+  const hasNoCandidates = mediaMatch.candidates.length === 0
+  const [isOpen, setIsOpen] = useState(hasNoCandidates)
   const [query, setQuery] = useState(mediaMatch.parsed_title)
   const [mediaType, setMediaType] = useState<'MOVIE' | 'TV'>(
     mediaMatch.media_type === 'MOVIE' ? 'MOVIE' : 'TV',

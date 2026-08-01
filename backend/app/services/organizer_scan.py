@@ -790,7 +790,7 @@ async def _persist_season_metadata(
             media_season_id=season.id,
             tmdb_id=episode_metadata.tmdb_id if episode_metadata else None,
             episode_number=episode_number,
-            name=episode_metadata.name if episode_metadata else "",
+            name=episode_metadata.name if episode_metadata else f"第 {episode_number} 集",
             overview=episode_metadata.overview if episode_metadata else "",
             air_date=episode_metadata.air_date if episode_metadata else None,
             still_url=episode_metadata.still_url if episode_metadata else None,

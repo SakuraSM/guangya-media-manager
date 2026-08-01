@@ -61,6 +61,7 @@ describe('MatchInspector', () => {
     expect(screen.getByText('原始文件')).toBeVisible()
     expect(screen.getAllByText(UNRESOLVED_MATCH.filename).length).toBeGreaterThan(0)
     expect(screen.getByText(UNRESOLVED_MATCH.source_path)).toBeVisible()
+    expect(screen.getByLabelText('TMDB 关键字')).toBeVisible()
     fireEvent.keyDown(screen.getByRole('button', { name: '更多审核操作' }), {
       key: 'Enter',
     })
@@ -69,11 +70,9 @@ describe('MatchInspector', () => {
       key: 'Enter',
     })
     fireEvent.click(screen.getByRole('menuitem', { name: '仅重新识别此文件' }))
-    fireEvent.click(screen.getByRole('button', { name: '搜索并手动匹配 TMDB' }))
 
     expect(handleToggleIgnore).toHaveBeenCalledOnce()
     expect(handleRetry).toHaveBeenCalledOnce()
-    expect(screen.getByLabelText('TMDB 关键字')).toBeVisible()
     expect(handleManualMatch).not.toHaveBeenCalled()
   })
 })

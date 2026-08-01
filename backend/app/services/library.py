@@ -50,6 +50,7 @@ async def load_library_items(session: AsyncSession) -> list[LibraryItem]:
             items_by_entity[entity.id] = LibraryItem(
                 id=entity.id,
                 tmdb_id=entity.tmdb_id,
+                metadata_source=entity.metadata_source,
                 title=entity.title,
                 year=entity.year,
                 media_type=media_type,
@@ -140,6 +141,7 @@ async def load_library_detail(
     return LibraryItemDetail(
         id=entity.id,
         tmdb_id=entity.tmdb_id,
+        metadata_source=entity.metadata_source,
         title=entity.title,
         year=entity.year,
         media_type=media_type,

@@ -20,6 +20,7 @@ from app.domain import (
     JobStatus,
     MatchDecision,
     MediaType,
+    MetadataSource,
     OperationStatus,
     OperationType,
     SourceAction,
@@ -134,7 +135,12 @@ class MediaEntity(Base, TimestampMixin):
     __tablename__ = "media_entities"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    tmdb_id: Mapped[int] = mapped_column()
+    tmdb_id: Mapped[int | None] = mapped_column(nullable=True)
+    metadata_source: Mapped[MetadataSource] = mapped_column(
+        String(16), default=MetadataSource.TMDB
+    )
+    provider_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    local_key: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     media_type: Mapped[MediaType] = mapped_column(String(16))
     title: Mapped[str] = mapped_column(String(256))
     original_title: Mapped[str] = mapped_column(String(256), default="")

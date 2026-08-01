@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.domain import MediaType
+from app.domain import MediaType, MetadataSource
 from app.models import (
     AuditEvent,
     MediaEpisode,
@@ -100,6 +100,8 @@ class AssetScraper:
     ) -> int:
         entity = media_match.media_entity
         if entity is None:
+            return 0
+        if entity.metadata_source != MetadataSource.TMDB or entity.tmdb_id is None:
             return 0
         language_value = job.config.get(
             "scrape_metadata_language",

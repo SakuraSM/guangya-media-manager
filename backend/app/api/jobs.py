@@ -34,6 +34,7 @@ from app.schemas import (
     CreateJobRequest,
     JobPage,
     JobView,
+    LocalMetadataGroupRequest,
     ManualMatchPreview,
     ManualMatchRequest,
     MatchCandidate,
@@ -605,6 +606,30 @@ async def assign_manual_group_match(
 
 
 @router.post(
+    "/{job_id}/matches/{match_id}/local/group",
+    response_model=MediaGroupUpdateResult,
+)
+async def assign_local_group_match(
+    job_id: str,
+    match_id: str,
+    request: LocalMetadataGroupRequest,
+    session: DatabaseSession,
+    services: Services,
+) -> MediaGroupUpdateResult:
+    try:
+        group_key, updated_items = await services.organizer.apply_local_group_match(
+            job_id=job_id,
+            match_id=match_id,
+            request=request,
+            session=session,
+        )
+    except OrganizerError as error:
+        raise _organizer_http_error(error) from error
+    await _enqueue_auto_execute_if_ready(job_id, session, services)
+    return MediaGroupUpdateResult(group_key=group_key, updated_items=updated_items)
+
+
+@router.post(
     "/{job_id}/matches/{match_id}/manual/preview",
     response_model=ManualMatchPreview,
 )
@@ -758,6 +783,9 @@ def _to_match_view(
         confidence=media_match.confidence,
         decision=media_match.decision,
         selected_tmdb_id=(media_match.media_entity.tmdb_id if media_match.media_entity else None),
+        metadata_source=(
+            media_match.media_entity.metadata_source if media_match.media_entity else None
+        ),
         candidates=[
             MatchCandidate.model_validate(candidate) for candidate in media_match.candidates
         ],

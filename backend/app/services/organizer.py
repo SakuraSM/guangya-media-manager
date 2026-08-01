@@ -17,6 +17,7 @@ from app.providers.base import CloudProvider
 from app.schemas import (
     BatchApproveMatchesRequest,
     CreateJobRequest,
+    LocalMetadataGroupRequest,
     ManualMatchPreview,
     ManualMatchRequest,
     UpdateMatchRequest,
@@ -47,6 +48,7 @@ from app.services.organizer_support import (
     find_candidate,
     load_job,
     persist_candidate_payload,
+    persist_local_metadata_entity,
     persist_metadata_candidate,
     read_config_float,
     target_path_for,
@@ -788,6 +790,128 @@ class OrganizerService:
         await self._refresh_job_readiness(session, job_id)
         return group_key, len(matches)
 
+    async def apply_local_group_match(
+        self,
+        *,
+        job_id: str,
+        match_id: str,
+        request: LocalMetadataGroupRequest,
+        session: AsyncSession,
+    ) -> tuple[str, int]:
+        anchor_match, job = await self._load_editable_match(
+            session=session, job_id=job_id, match_id=match_id
+        )
+        if not anchor_match.group_key:
+            raise OrganizerError("当前记录缺少影视分组，请重新扫描后再试")
+        matches = list(
+            (
+                await session.scalars(
+                    select(MediaMatch)
+                    .join(SourceItem)
+                    .options(selectinload(MediaMatch.source_item))
+                    .where(
+                        SourceItem.job_id == job_id,
+                        MediaMatch.group_key == anchor_match.group_key,
+                    )
+                    .order_by(SourceItem.relative_path.asc())
+                )
+            ).all()
+        )
+        if not matches:
+            raise OrganizerError("Media group not found")
+        entity = await persist_local_metadata_entity(
+            session,
+            title=request.title,
+            year=request.year,
+            media_type=MediaType.TV,
+        )
+        group_key = "|".join((MediaType.TV.value, entity.title.casefold(), str(entity.year or "")))
+        mapped_items = 0
+        for media_match in matches:
+            source_path = media_match.source_item.source_path or media_match.source_item.filename
+            parsed = parse_media_filename(
+                media_match.source_item.filename,
+                parent_path=str(PurePosixPath(source_path).parent),
+                source_root=job.source_directory_path,
+            )
+            episode_numbers = tuple(
+                dict.fromkeys(
+                    media_match.episode_numbers
+                    or parsed.episode_numbers
+                    or parse_bare_episode_numbers(media_match.source_item.filename)
+                )
+            )
+            season_number = media_match.season_number or parsed.season_number
+            if season_number is None and episode_numbers:
+                season_number = request.season_number
+            media_match.media_entity_id = entity.id
+            media_match.media_type = MediaType.TV
+            media_match.parsed_title = entity.title
+            media_match.parsed_year = entity.year
+            media_match.group_key = group_key
+            media_match.source_item.group_key = group_key
+            media_match.confidence = 1
+            media_match.candidates = []
+            media_match.season_number = season_number
+            media_match.episode_numbers = list(episode_numbers)
+            await session.execute(
+                delete(MediaMatchEpisode).where(MediaMatchEpisode.media_match_id == media_match.id)
+            )
+            if season_number is None or not episode_numbers:
+                media_match.decision = MatchDecision.REVIEW
+                media_match.target_path = ""
+                media_match.reason_codes = list(
+                    dict.fromkeys(
+                        (
+                            *media_match.reason_codes,
+                            "LOCAL_METADATA",
+                            "EPISODE_MAPPING_REQUIRED",
+                        )
+                    )
+                )
+                continue
+            _, episodes = await _persist_season_metadata(
+                session, entity.id, season_number, episode_numbers, None
+            )
+            media_match.episode_title = " / ".join(episode.name for episode in episodes)
+            media_match.decision = MatchDecision.APPROVED
+            media_match.reason_codes = list(
+                dict.fromkeys(
+                    (
+                        *(
+                            code
+                            for code in media_match.reason_codes
+                            if code != "EPISODE_MAPPING_REQUIRED"
+                        ),
+                        "LOCAL_METADATA",
+                    )
+                )
+            )
+            media_match.target_path = _target_path_for_identity(
+                media_match, entity.title, entity.year
+            )
+            await session.flush()
+            session.add_all(
+                MediaMatchEpisode(
+                    media_match_id=media_match.id,
+                    media_episode_id=episode.id,
+                    ordinal=ordinal,
+                )
+                for ordinal, episode in enumerate(episodes)
+            )
+            mapped_items += 1
+        session.add(
+            AuditEvent(
+                job_id=job_id,
+                event_type="LOCAL_MEDIA_GROUP_ASSIGNED",
+                message=f"已使用本地元数据整理整部剧集，共更新 {len(matches)} 条记录",
+                severity="warning" if mapped_items != len(matches) else "info",
+            )
+        )
+        await session.commit()
+        await self._refresh_job_readiness(session, job_id)
+        return group_key, len(matches)
+
     async def preview_manual_match(
         self,
         *,
@@ -969,6 +1093,14 @@ class OrganizerService:
 
 
 def _target_path_for_candidate(media_match: MediaMatch, candidate: MatchCandidateSchema) -> str:
+    return _target_path_for_identity(media_match, candidate.title, candidate.year)
+
+
+def _target_path_for_identity(
+    media_match: MediaMatch,
+    title: str,
+    year: int | None,
+) -> str:
     parsed_from_filename = parse_media_filename(media_match.source_item.filename)
     quality_tags_value = media_match.release_info.get("quality_tags", [])
     quality_tags = (
@@ -996,8 +1128,8 @@ def _target_path_for_candidate(media_match: MediaMatch, candidate: MatchCandidat
     )
     return build_target_relative_path(
         NamingInput(
-            title=candidate.title,
-            year=candidate.year,
+            title=title,
+            year=year,
             parsed=parsed,
             extension=media_match.source_item.extension,
             episode_title=media_match.episode_title,

@@ -14,6 +14,8 @@ async def refresh_entity_metadata(
     entity: MediaEntity,
     language: str,
 ) -> bool:
+    if entity.tmdb_id is None:
+        return False
     payload = await tmdb_service.get_media_details(
         tmdb_id=entity.tmdb_id,
         media_type=entity.media_type,

@@ -4,7 +4,7 @@ from xml.etree import ElementTree
 
 import pytest
 
-from app.domain import MediaType, OperationStatus, OperationType
+from app.domain import MediaType, MetadataSource, OperationStatus, OperationType
 from app.models import (
     FileOperation,
     MediaEntity,
@@ -102,6 +102,21 @@ def test_episode_nfo_uses_real_episode_metadata() -> None:
     assert root.findtext("episode") == "3"
     assert root.findtext("aired") == "2008-02-10"
     assert root.findtext("rating") == "8.1"
+
+
+def test_local_metadata_nfo_has_no_fake_tmdb_id() -> None:
+    entity = MediaEntity(
+        tmdb_id=None,
+        metadata_source=MetadataSource.LOCAL,
+        local_key="local-short-drama",
+        media_type=MediaType.TV,
+        title="逆袭人生",
+    )
+
+    root = ElementTree.fromstring(render_media_nfo(entity))
+
+    assert root.find("uniqueid[@type='tmdb']") is None
+    assert root.findtext("lockdata") == "true"
 
 
 def test_tv_asset_plan_creates_compatibility_artwork() -> None:

@@ -11,9 +11,11 @@ import {
 import { Poster } from '@/components/Poster'
 import { RecognitionNotice } from '@/components/RecognitionNotice'
 import { ManualTmdbMatchForm } from '@/components/ManualTmdbMatchForm'
+import { LocalMetadataGroupForm } from '@/components/LocalMetadataGroupForm'
 import { OriginalFileInfo } from '@/components/OriginalFileInfo'
 import {
   MATCH_DECISION,
+  type LocalMetadataGroupInput,
   type ManualMatchInput,
   type MatchCandidate,
   type MediaMatch,
@@ -54,6 +56,7 @@ interface MatchInspectorProps {
   onRetryGroup: () => void
   onManualMatch: (match: ManualMatchInput) => void
   onManualGroupMatch: (match: ManualMatchInput) => void
+  onLocalGroupMatch?: (metadata: LocalMetadataGroupInput) => void
 }
 
 export function MatchInspector({
@@ -70,6 +73,7 @@ export function MatchInspector({
   onRetryGroup,
   onManualMatch,
   onManualGroupMatch,
+  onLocalGroupMatch,
 }: MatchInspectorProps) {
   if (!mediaMatch) {
     return (
@@ -103,7 +107,7 @@ export function MatchInspector({
           {mediaMatch.filename}
         </h2>
       </div>
-      <ScrollArea className="min-h-0 flex-1">
+      <ScrollArea key={mediaMatch.id} className="min-h-0 flex-1">
         <div className="flex flex-col gap-4 p-4">
           <section className="space-y-2" aria-labelledby="original-file-title">
             <h3 id="original-file-title" className="text-sm font-medium">
@@ -177,6 +181,16 @@ export function MatchInspector({
             onSubmitCurrent={onManualMatch}
             onSubmitGroup={onManualGroupMatch}
           />
+          {mediaMatch.candidates.length === 0 &&
+          mediaMatch.media_type === 'TV' &&
+          onLocalGroupMatch ? (
+            <LocalMetadataGroupForm
+              key={`local-${mediaMatch.id}`}
+              mediaMatch={mediaMatch}
+              isSaving={isSaving}
+              onSubmit={onLocalGroupMatch}
+            />
+          ) : null}
         </div>
       </ScrollArea>
       <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 border-t bg-card p-3">

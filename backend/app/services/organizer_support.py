@@ -5,7 +5,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain import JobStatus, MatchDecision
+from app.domain import JobStatus, MatchDecision, MediaType, MetadataSource
 from app.models import AuditEvent, MediaEntity, OrganizeJob
 from app.schemas import MatchCandidate as MatchCandidateSchema
 from app.services.media_parser import ParsedMediaName
@@ -77,6 +77,8 @@ async def persist_metadata_candidate(
         return existing
     entity = MediaEntity(
         tmdb_id=candidate.tmdb_id,
+        metadata_source=MetadataSource.TMDB,
+        provider_id=str(candidate.tmdb_id),
         media_type=candidate.media_type,
         title=candidate.title,
         original_title=candidate.original_title,
@@ -85,6 +87,39 @@ async def persist_metadata_candidate(
         poster_url=candidate.poster_url,
         backdrop_url=candidate.backdrop_url,
         metadata_snapshot=asdict(candidate),
+    )
+    session.add(entity)
+    await session.flush()
+    return entity
+
+
+async def persist_local_metadata_entity(
+    session: AsyncSession,
+    *,
+    title: str,
+    year: int | None,
+    media_type: MediaType,
+) -> MediaEntity:
+    normalized_title = " ".join(title.split()).casefold()
+    local_key = sha256(
+        f"{media_type.value}|{normalized_title}|{year or ''}".encode()
+    ).hexdigest()
+    existing = await session.scalar(
+        select(MediaEntity).where(MediaEntity.local_key == local_key)
+    )
+    if existing:
+        return existing
+    entity = MediaEntity(
+        tmdb_id=None,
+        metadata_source=MetadataSource.LOCAL,
+        provider_id=None,
+        local_key=local_key,
+        media_type=media_type,
+        title=" ".join(title.split()),
+        original_title="",
+        year=year,
+        overview="",
+        metadata_snapshot={"source": MetadataSource.LOCAL.value, "lockdata": True},
     )
     session.add(entity)
     await session.flush()
@@ -120,6 +155,24 @@ def target_path_for(
         NamingInput(
             title=candidate.title,
             year=candidate.year,
+            parsed=parsed,
+            extension=extension,
+            episode_title=episode_title,
+        )
+    )
+
+
+def target_path_for_entity(
+    parsed: ParsedMediaName,
+    entity: MediaEntity,
+    extension: str,
+    *,
+    episode_title: str = "",
+) -> str:
+    return build_target_relative_path(
+        NamingInput(
+            title=entity.title,
+            year=entity.year,
             parsed=parsed,
             extension=extension,
             episode_title=episode_title,

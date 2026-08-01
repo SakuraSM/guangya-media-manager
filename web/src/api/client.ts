@@ -11,6 +11,7 @@ import type {
   JobPage,
   LibraryItem,
   LibraryItemDetail,
+  LocalMetadataGroupInput,
   ManualMatchInput,
   ManualMatchPreview,
   MatchCandidate,
@@ -76,6 +77,10 @@ interface BatchApproveMatchesInput {
 
 interface AssignManualMatchInput extends MatchActionInput {
   match: ManualMatchInput
+}
+
+interface AssignLocalGroupInput extends MatchActionInput {
+  metadata: LocalMetadataGroupInput
 }
 
 function manualMatchPayload(match: ManualMatchInput) {
@@ -230,6 +235,18 @@ export const api = {
       {
         method: 'POST',
         body: JSON.stringify(manualMatchPayload(match)),
+      },
+    ),
+  assignLocalGroupMatch: ({ jobId, matchId, metadata }: AssignLocalGroupInput) =>
+    requestJson<{ group_key: string; updated_items: number }>(
+      `/jobs/${jobId}/matches/${matchId}/local/group`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          title: metadata.title,
+          year: metadata.year,
+          season_number: metadata.seasonNumber,
+        }),
       },
     ),
   previewManualMatch: ({ jobId, matchId, match }: AssignManualMatchInput) =>

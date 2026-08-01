@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { FolderTree } from 'lucide-react'
 import type {
+  LocalMetadataGroupInput,
   ManualMatchInput,
   MediaMatch,
   MediaMatchPage,
@@ -57,6 +58,7 @@ interface ReviewWorkspaceProps {
   onRetryGroup: () => void
   onManualMatch: (match: ManualMatchInput) => void
   onManualGroupMatch: (match: ManualMatchInput) => void
+  onLocalGroupMatch: (metadata: LocalMetadataGroupInput) => void
   onPageChange: (page: number) => void
   onPageSizeChange: (pageSize: number) => void
 }
@@ -110,6 +112,7 @@ export function ReviewWorkspace(props: ReviewWorkspaceProps) {
       onRetryGroup={props.onRetryGroup}
       onManualMatch={props.onManualMatch}
       onManualGroupMatch={props.onManualGroupMatch}
+      onLocalGroupMatch={props.onLocalGroupMatch}
     />
   )
 

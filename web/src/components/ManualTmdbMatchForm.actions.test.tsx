@@ -81,7 +81,7 @@ describe('ManualTmdbMatchForm', () => {
       </QueryClientProvider>,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: '搜索并手动匹配 TMDB' }))
+    expect(screen.getByLabelText('TMDB 关键字')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: '搜索 TMDB' }))
     await screen.findByText('纠正后的剧名')
     fireEvent.click(screen.getByRole('button', { name: '生成整理路径预览' }))
@@ -115,7 +115,7 @@ describe('ManualTmdbMatchForm', () => {
       </QueryClientProvider>,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: '搜索并手动匹配 TMDB' }))
+    expect(screen.getByLabelText('TMDB 关键字')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: '搜索 TMDB' }))
     await screen.findByText('纠正后的剧名')
 

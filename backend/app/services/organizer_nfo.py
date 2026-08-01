@@ -2,7 +2,7 @@ from collections.abc import Iterable, Mapping
 from html import escape
 from pathlib import PurePosixPath
 
-from app.domain import MediaType
+from app.domain import MediaType, MetadataSource
 from app.models import MediaEntity, MediaEpisode, MediaMatch, MediaSeason
 
 XML_HEADER = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -11,13 +11,13 @@ MAX_NFO_ACTORS = 20
 
 def render_media_nfo(entity: MediaEntity) -> str:
     root_tag = "tvshow" if entity.media_type == MediaType.TV else "movie"
-    snapshot = entity.metadata_snapshot
+    snapshot = entity.metadata_snapshot or {}
     common_lines = _common_media_lines(entity, snapshot)
     return _document(root_tag, common_lines)
 
 
 def render_season_nfo(season: MediaSeason) -> str:
-    snapshot = season.metadata_snapshot
+    snapshot = season.metadata_snapshot or {}
     lines = [
         _node("title", season.name),
         _node("seasonnumber", season.season_number),
@@ -34,7 +34,7 @@ def render_episode_nfo(
     entity: MediaEntity,
     episode: MediaEpisode,
 ) -> str:
-    snapshot = episode.metadata_snapshot
+    snapshot = episode.metadata_snapshot or {}
     lines = [
         _node("title", episode.name),
         _node("showtitle", entity.title),
@@ -80,8 +80,11 @@ def _common_media_lines(
         _node("tagline", _text(snapshot.get("tagline"))),
         _cdata_node("plot", entity.overview),
         _cdata_node("outline", entity.overview),
-        _unique_id("tmdb", entity.tmdb_id, is_default=True),
     ]
+    if entity.metadata_source != MetadataSource.LOCAL and entity.tmdb_id is not None:
+        lines.append(_unique_id("tmdb", entity.tmdb_id, is_default=True))
+    else:
+        lines.append(_node("lockdata", "true"))
     lines.extend(_external_id_lines(snapshot))
     lines.extend(_named_collection_lines("genre", snapshot.get("genres")))
     lines.extend(_named_collection_lines("studio", snapshot.get("production_companies")))
@@ -205,11 +208,12 @@ def _nested_node(tag: str, lines: Iterable[str]) -> str:
 
 
 def _node(tag: str, value: object) -> str:
-    return f"<{tag}>{escape(str(value))}</{tag}>"
+    normalized = "" if value is None else str(value)
+    return f"<{tag}>{escape(normalized)}</{tag}>"
 
 
-def _cdata_node(tag: str, value: str) -> str:
-    safe_value = value.replace("]]>", "]]]]><![CDATA[>")
+def _cdata_node(tag: str, value: str | None) -> str:
+    safe_value = (value or "").replace("]]>", "]]]]><![CDATA[>")
     return f"<{tag}><![CDATA[{safe_value}]]></{tag}>"
 
 

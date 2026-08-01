@@ -57,6 +57,19 @@ def test_uses_chinese_season_directory_for_numeric_episode() -> None:
     assert "DIRECTORY_CONTEXT" in parsed.reason_codes
 
 
+def test_uses_short_drama_directory_for_numeric_episode() -> None:
+    parsed = parse_media_filename(
+        "01.mp4",
+        parent_path="/光鸭云盘/逆袭人生[短剧][全80集]",
+        source_root="/光鸭云盘",
+    )
+
+    assert parsed.media_type == MediaType.TV
+    assert parsed.title == "逆袭人生"
+    assert parsed.season_number == 1
+    assert parsed.episode_numbers == (1,)
+
+
 def test_parses_specials_directory_as_season_zero() -> None:
     parsed = parse_media_filename(
         "02.mkv",

@@ -60,7 +60,9 @@ export function LibraryCard({ item, onOpen }: LibraryCardProps) {
         </div>
       </CardContent>
       <CardFooter className="justify-between gap-3">
-        <span className="text-xs text-muted-foreground">TMDB · {item.tmdb_id}</span>
+        <span className="text-xs text-muted-foreground">
+          {item.metadata_source === 'LOCAL' ? '本地元数据' : `TMDB · ${item.tmdb_id}`}
+        </span>
         {isTvShow ? (
           <Button type="button" variant="outline" onClick={handleOpenLibraryItem}>
             <ListTree data-icon="inline-start" />
