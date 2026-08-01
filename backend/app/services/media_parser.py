@@ -38,7 +38,15 @@ SEASON_DIRECTORY_PATTERN = re.compile(r"(?i)^(?:season[ ._-]*|s)(?P<number>\d{1,
 CHINESE_SEASON_PATTERN = re.compile(r"^第?(?P<number>\d{1,2})季$")
 CHINESE_ORDINAL_SEASON_PATTERN = re.compile(r"第(?P<number>[零〇一二两三四五六七八九十百]+)季")
 SEASON_IN_DIRECTORY_PATTERN = re.compile(
-    r"(?i)(?:^|[ ._-])(?:season[ ._-]*|s|第?)(?P<number>\d{1,2})季?(?:$|[ ._+-])"
+    r"(?i)(?:^|[ ._-])(?:season[ ._-]*|s[ ._-]*|第)(?P<number>\d{1,2})季?"
+    r"(?:$|[ ._+-])"
+)
+BARE_SEASON_IN_DIRECTORY_PATTERN = re.compile(
+    r"(?i)(?:^|[ ._-])(?P<number>\d{1,2})季(?:$|[ ._+-])"
+)
+EPISODE_RANGE_DESCRIPTOR_PATTERN = re.compile(
+    r"(?i)(?:^|[ ._-])(?:E|EP|第)?\d{1,3}\s*[-至]\s*(?:E|EP)?\d{1,3}"
+    r"(?:集|话)?(?=$|[ ._+-])"
 )
 COLLECTION_SUFFIX_PATTERN = re.compile(r"(?i)\s+(?:全?\d+\s*-\s*\d+季|全\d+季|合集).*$")
 EPISODE_COUNT_PATTERN = re.compile(r"(?i)(?:全\s*)?\d+\s*集(?:全|完)?")
@@ -254,6 +262,7 @@ def _season_number_from_directory(value: str) -> int | None:
         SEASON_DIRECTORY_PATTERN.fullmatch(value)
         or CHINESE_SEASON_PATTERN.fullmatch(value)
         or SEASON_IN_DIRECTORY_PATTERN.search(value)
+        or BARE_SEASON_IN_DIRECTORY_PATTERN.search(value)
     )
     if match:
         return int(match.group("number"))
@@ -262,7 +271,9 @@ def _season_number_from_directory(value: str) -> int | None:
 
 
 def _title_from_season_directory(value: str) -> str:
-    match = SEASON_IN_DIRECTORY_PATTERN.search(value)
+    match = SEASON_IN_DIRECTORY_PATTERN.search(
+        value
+    ) or BARE_SEASON_IN_DIRECTORY_PATTERN.search(value)
     if match is not None:
         return _clean_directory_title(value[: match.start()])
     chinese_match = CHINESE_ORDINAL_SEASON_PATTERN.search(value)
@@ -278,7 +289,16 @@ def _clean_directory_title(value: str) -> str:
     without_subtitles = SUBTITLE_DESCRIPTION_PATTERN.sub("", without_episode_count)
     without_collection = COLLECTION_SUFFIX_PATTERN.sub("", without_subtitles)
     without_quality = RELEASE_MARKERS.sub("", without_collection)
-    title = re.split(r"(?i)\s*\+(?:电影|番外|特辑|movie).*$", without_quality)[0]
+    without_episode_range = EPISODE_RANGE_DESCRIPTOR_PATTERN.sub(" ", without_quality)
+    without_release_group = (
+        RELEASE_GROUP_PATTERN.sub("", without_episode_range)
+        if RELEASE_MARKERS.search(value)
+        else without_episode_range
+    )
+    title = re.split(
+        r"(?i)\s*\+(?:电影|番外|特辑|movie).*$",
+        without_release_group,
+    )[0]
     return _clean_title(title)
 
 

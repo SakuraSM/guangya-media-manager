@@ -6,9 +6,11 @@ from app.domain import JobStatus, MatchDecision, MediaType
 from app.models import MediaMatch, OrganizeJob, SourceItem
 from app.schemas import ManualMatchRequest, UpdateMatchRequest
 from app.services.organizer import (
+    ManualEpisodeMappingContext,
     OrganizerError,
     OrganizerService,
     _group_episode_mapping,
+    _manual_episode_mapping,
 )
 
 
@@ -118,6 +120,30 @@ def test_group_manual_match_reparses_missing_sibling_mapping() -> None:
         request=request,
         source_root="/媒体",
     ) == (1, (9,))
+
+
+def test_manual_match_infers_numeric_episode_from_parent_season() -> None:
+    media_match = _match(
+        match_id="numeric",
+        filename="12.mkv",
+        candidate_id=42,
+    )
+    media_match.season_number = None
+    media_match.episode_numbers = []
+    media_match.source_item.source_path = "/媒体/示例剧/第2季/12.mkv"
+    request = ManualMatchRequest(
+        tmdb_id=42,
+        title="示例剧",
+        media_type=MediaType.TV,
+    )
+
+    assert _manual_episode_mapping(
+        ManualEpisodeMappingContext(
+            media_match=media_match,
+            request=request,
+            source_root="/媒体",
+        )
+    ) == (2, (12,))
 
 
 def _match(

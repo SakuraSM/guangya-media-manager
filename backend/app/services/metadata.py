@@ -89,6 +89,12 @@ class AiRecognition(BaseModel):
     confidence: float
 
 
+class AiTitleReview(BaseModel):
+    is_match: bool
+    confidence: float = Field(ge=0, le=1)
+    reason: str = Field(default="", max_length=240)
+
+
 class MetadataServiceError(RuntimeError):
     def __init__(
         self,
@@ -106,6 +112,14 @@ AI_RESPONSE_FENCE = re.compile(
     r"^\s*```(?:json)?\s*(?P<payload>.*?)\s*```\s*$",
     re.IGNORECASE | re.DOTALL,
 )
+AI_FIELD_ALIASES = {
+    "media_type": ("mediaType", "type"),
+    "title": ("seriesTitle", "showTitle", "mediaTitle", "name"),
+    "season": ("seasonNumber",),
+    "episodes": ("episodeNumbers", "episodeNumber"),
+}
+AI_TV_TYPE_ALIASES = frozenset({"TV", "SERIES", "TV_SHOW", "SHOW", "电视剧", "剧集"})
+AI_MOVIE_TYPE_ALIASES = frozenset({"MOVIE", "FILM", "电影"})
 MAX_METADATA_ATTEMPTS = 3
 RETRY_BASE_DELAY_SECONDS = 0.25
 
@@ -113,23 +127,71 @@ RETRY_BASE_DELAY_SECONDS = 0.25
 def parse_ai_recognition(content: str) -> AiRecognition:
     fence_match = AI_RESPONSE_FENCE.match(content)
     normalized_content = fence_match.group("payload") if fence_match else content.strip()
-    try:
-        payload = json.loads(normalized_content)
-    except json.JSONDecodeError as error:
-        raise MetadataServiceError("AI returned invalid JSON") from error
-    if not isinstance(payload, dict):
-        raise MetadataServiceError("AI returned a non-object response")
+    payload = _decode_ai_object(normalized_content)
+    nested_result = payload.get("result")
+    if isinstance(nested_result, dict):
+        payload = {str(key): value for key, value in nested_result.items()}
+    for canonical_name, aliases in AI_FIELD_ALIASES.items():
+        if canonical_name in payload:
+            continue
+        alias = next((name for name in aliases if name in payload), None)
+        if alias is not None:
+            payload[canonical_name] = payload[alias]
     media_type = payload.get("media_type")
     if isinstance(media_type, str):
-        payload["media_type"] = media_type.upper()
+        normalized_media_type = media_type.strip().upper().replace("-", "_").replace(" ", "_")
+        if normalized_media_type in AI_TV_TYPE_ALIASES:
+            payload["media_type"] = MediaType.TV.value
+        elif normalized_media_type in AI_MOVIE_TYPE_ALIASES:
+            payload["media_type"] = MediaType.MOVIE.value
+        else:
+            payload["media_type"] = MediaType.UNKNOWN.value
     if payload.get("edition") is None:
         payload["edition"] = ""
-    if payload.get("episodes") is None:
+    episodes = payload.get("episodes")
+    if episodes is None:
         payload["episodes"] = []
+    elif isinstance(episodes, int):
+        payload["episodes"] = [episodes]
+    elif isinstance(episodes, str):
+        payload["episodes"] = [int(value) for value in re.findall(r"\d+", episodes)]
+    if payload.get("confidence") is None:
+        payload["confidence"] = 0.5
     try:
         return AiRecognition.model_validate(payload)
     except ValidationError as error:
         raise MetadataServiceError("AI returned an invalid recognition schema") from error
+
+
+def parse_ai_title_review(content: str) -> AiTitleReview:
+    fence_match = AI_RESPONSE_FENCE.match(content)
+    normalized_content = fence_match.group("payload") if fence_match else content.strip()
+    payload = _decode_ai_object(normalized_content)
+    nested_result = payload.get("result")
+    if isinstance(nested_result, dict):
+        payload = {str(key): value for key, value in nested_result.items()}
+    if "is_match" not in payload and "isMatch" in payload:
+        payload["is_match"] = payload["isMatch"]
+    try:
+        return AiTitleReview.model_validate(payload)
+    except ValidationError as error:
+        raise MetadataServiceError("AI returned an invalid title review schema") from error
+
+
+def _decode_ai_object(content: str) -> dict[str, object]:
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError as initial_error:
+        object_start = content.find("{")
+        if object_start < 0:
+            raise MetadataServiceError("AI returned invalid JSON") from initial_error
+        try:
+            payload, _ = json.JSONDecoder().raw_decode(content[object_start:])
+        except json.JSONDecodeError as error:
+            raise MetadataServiceError("AI returned invalid JSON") from error
+    if not isinstance(payload, dict):
+        raise MetadataServiceError("AI returned a non-object response")
+    return {str(key): value for key, value in payload.items()}
 
 
 class TmdbService:
@@ -362,6 +424,10 @@ class AiRecognitionService:
         self._base_url = base_url.rstrip("/")
         self._model = model
 
+    @property
+    def is_configured(self) -> bool:
+        return bool(self._api_key)
+
     async def recognize(
         self,
         *,
@@ -379,9 +445,15 @@ class AiRecognitionService:
                 {
                     "role": "system",
                     "content": (
-                        "按整个目录识别同一影视分组，只返回 JSON。字段为 media_type、title、year、"
-                        "season、episodes、edition、confidence。"
+                        "你是影视目录识别器。按整个目录识别同一影视分组，只返回 JSON。"
+                        "字段为 media_type、title、year、season、episodes、edition、confidence。"
                         "media_type 只能为 MOVIE/TV/UNKNOWN。"
+                        "当代表文件是纯数字文件名时，它通常是剧集编号，必须优先从 parent_path "
+                        "及 relative_files 的共同祖先目录推断剧名，不得把数字当作片名。"
+                        "目录中的 EP01-52、E01-E52、01-52集、全52集表示集数范围，不是第52季；"
+                        "Season 02、S02、第2季才表示季号。"
+                        "title 必须只返回作品名，移除年份、集数范围、分辨率、编码和发布组。"
+                        "同一组只识别一次，不逐集猜测不同剧名；无法确定的字段使用 null 或空数组。"
                     ),
                 },
                 {
@@ -392,6 +464,13 @@ class AiRecognitionService:
                             "parent_path": parent_path,
                             "relative_files": list(group_files[:MAX_AI_GROUP_FILES]),
                             "total_files": len(group_files) or 1,
+                            "rule_result": {
+                                "media_type": parsed.media_type.value,
+                                "title": parsed.title,
+                                "year": parsed.year,
+                                "season": parsed.season_number,
+                                "episodes": list(parsed.episode_numbers),
+                            },
                         },
                         ensure_ascii=False,
                     ),
@@ -426,6 +505,81 @@ class AiRecognitionService:
                     if attempt + 1 < MAX_METADATA_ATTEMPTS:
                         await asyncio.sleep(RETRY_BASE_DELAY_SECONDS * 2**attempt)
         return _append_reason_codes(parsed, "AI_FALLBACK", failure_reason)
+
+    async def review_title_match(
+        self,
+        *,
+        candidate: MetadataCandidate,
+        parent_paths: tuple[str, ...],
+        filenames: tuple[str, ...],
+    ) -> AiTitleReview:
+        if not self._api_key:
+            raise MetadataServiceError(
+                "AI is not configured",
+                reason_code="AI_NOT_CONFIGURED",
+            )
+        request_payload = {
+            "model": self._model,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是影视匹配审核器。判断候选作品名称和类型是否与目录名、文件名"
+                        "代表的同一部电影或电视剧一致。只审核作品级名称与 MOVIE/TV 类型；"
+                        "不要判断季号、集号、单集标题或单集顺序是否正确。"
+                        "忽略分辨率、编码、发布组、年份和语言差异。"
+                        "只有证据明确一致时 is_match 才为 true。只返回 JSON："
+                        '{"is_match":boolean,"confidence":0到1,"reason":"简短原因"}。'
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "candidate": {
+                                "title": candidate.title,
+                                "original_title": candidate.original_title,
+                                "media_type": candidate.media_type.value,
+                            },
+                            "parent_paths": list(parent_paths[:20]),
+                            "filenames": list(filenames[:MAX_AI_GROUP_FILES]),
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+        }
+        headers = {"Authorization": f"Bearer {self._api_key}"}
+        last_error: BaseException | None = None
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
+            for attempt in range(MAX_METADATA_ATTEMPTS):
+                try:
+                    response = await client.post(
+                        f"{self._base_url}/chat/completions",
+                        headers=headers,
+                        json=request_payload,
+                    )
+                    response.raise_for_status()
+                    content = response.json()["choices"][0]["message"]["content"]
+                    if not isinstance(content, str):
+                        raise MetadataServiceError("AI returned non-text content")
+                    return parse_ai_title_review(content)
+                except (
+                    httpx.HTTPError,
+                    KeyError,
+                    IndexError,
+                    json.JSONDecodeError,
+                    TypeError,
+                    MetadataServiceError,
+                ) as error:
+                    last_error = error
+                    if attempt + 1 < MAX_METADATA_ATTEMPTS:
+                        await asyncio.sleep(RETRY_BASE_DELAY_SECONDS * 2**attempt)
+        raise MetadataServiceError(
+            "AI title review failed",
+            reason_code=_ai_failure_reason(last_error or RuntimeError()),
+        )
 
 
 class MetadataResolver:

@@ -1,7 +1,7 @@
 import { LoaderCircle } from 'lucide-react'
 import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import { AUTO_APPROVE_THRESHOLD, REVIEW_THRESHOLD } from '@/constants'
-import type { MediaMatch } from '@/types'
+import type { MediaMatch, ReviewFilter } from '@/types'
 import { formatConfidence } from '@/utils/format'
 import { isMetadataPending, matchRecognitionMessages } from '@/utils/matchFailureReasons'
 import {
@@ -10,6 +10,7 @@ import {
   type MediaMatchGroup,
 } from '@/utils/reviewGrouping'
 import { OriginalFileInfo } from '@/components/OriginalFileInfo'
+import { ReviewFilterControl } from '@/components/ReviewFilterControl'
 import { Poster } from '@/components/Poster'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Badge } from '@/components/ui/badge'
@@ -23,9 +24,12 @@ interface GroupedMatchTableProps {
   selectedMatchId: string | null
   selectedMatchIds: ReadonlySet<string>
   isSelectionEnabled: boolean
+  reviewFilter: ReviewFilter
+  isFilterLoading: boolean
   onSelectMatch: (mediaMatch: MediaMatch) => void
   onToggleSelection: (matchId: string) => void
   onTogglePageSelection: () => void
+  onReviewFilterChange: (value: ReviewFilter) => void
   leadingAction?: ReactNode
 }
 
@@ -34,9 +38,12 @@ export function GroupedMatchTable({
   selectedMatchId,
   selectedMatchIds,
   isSelectionEnabled,
+  reviewFilter,
+  isFilterLoading,
   onSelectMatch,
   onToggleSelection,
   onTogglePageSelection,
+  onReviewFilterChange,
   leadingAction,
 }: GroupedMatchTableProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
@@ -85,9 +92,14 @@ export function GroupedMatchTable({
       <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b px-3">
         <div className="flex min-w-0 items-center gap-2">
           {leadingAction}
-          <h2 id="match-table-title" className="truncate text-sm font-medium">
+          <h2 id="match-table-title" className="hidden truncate text-sm font-medium 2xl:block">
             TMDB 优先识别
           </h2>
+          <ReviewFilterControl
+            value={reviewFilter}
+            isLoading={isFilterLoading}
+            onChange={onReviewFilterChange}
+          />
         </div>
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
           <Checkbox

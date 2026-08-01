@@ -122,6 +122,37 @@ def test_cleans_collection_suffix_from_show_directory() -> None:
     assert parsed.season_number == 3
 
 
+def test_numeric_episode_uses_release_folder_as_series_context() -> None:
+    parsed = parse_media_filename(
+        "52.mp4",
+        parent_path=(
+            "/国产剧/全量信息/"
+            "Fighter.of.the.Destiny.2017.EP01-52.1080P.WEB-DL.H264.AAC-HQC"
+        ),
+        source_root="/国产剧",
+        inferred_season_number=1,
+    )
+
+    assert parsed.media_type == MediaType.TV
+    assert parsed.title == "Fighter of the Destiny"
+    assert parsed.year == 2017
+    assert parsed.season_number == 1
+    assert parsed.episode_numbers == (52,)
+    assert parsed.context_group == "Fighter of the Destiny"
+
+
+def test_preserves_hyphenated_series_name_from_parent_directory() -> None:
+    parsed = parse_media_filename(
+        "01.mp4",
+        parent_path="/光鸭云盘/Love-Hate/Season 01",
+        source_root="/光鸭云盘",
+    )
+
+    assert parsed.title == "Love-Hate"
+    assert parsed.season_number == 1
+    assert parsed.episode_numbers == (1,)
+
+
 def test_parses_real_world_chinese_ordinal_season_directory() -> None:
     source_root = "/光鸭云盘/爱情公寓 1-5季+电影+番外 4K"
     parsed = parse_media_filename(

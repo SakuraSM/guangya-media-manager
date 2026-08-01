@@ -52,6 +52,11 @@ class MatchDecision(StrEnum):
     UNRESOLVED = "UNRESOLVED"
 
 
+class MatchReviewState(StrEnum):
+    PENDING = "PENDING"
+    REVIEWED = "REVIEWED"
+
+
 class OperationStatus(StrEnum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"

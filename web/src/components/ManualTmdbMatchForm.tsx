@@ -7,11 +7,7 @@ import {
   TmdbSearchResults,
   TvEpisodeMappingFields,
 } from '@/components/ManualTmdbMatchFields'
-import {
-  type ManualMatchInput,
-  type MatchCandidate,
-  type MediaMatch,
-} from '@/types'
+import { type ManualMatchInput, type MatchCandidate, type MediaMatch } from '@/types'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -35,7 +31,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
-import { buildManualMatchInput } from '@/utils/episodeExpression'
+import {
+  buildManualMatchInput,
+  formatEpisodeMappingLabel,
+  inferManualEpisodeMapping,
+} from '@/utils/episodeExpression'
 
 interface ManualTmdbMatchFormProps {
   jobId: string
@@ -52,6 +52,12 @@ export function ManualTmdbMatchForm({
   onSubmitCurrent,
   onSubmitGroup,
 }: ManualTmdbMatchFormProps) {
+  const episodeMapping = inferManualEpisodeMapping({
+    filename: mediaMatch.filename,
+    sourcePath: mediaMatch.source_path,
+    seasonNumber: mediaMatch.season_number,
+    episodeNumbers: mediaMatch.episode_numbers,
+  })
   const [isOpen, setIsOpen] = useState(false)
   const [query, setQuery] = useState(mediaMatch.parsed_title)
   const [mediaType, setMediaType] = useState<'MOVIE' | 'TV'>(
@@ -59,11 +65,12 @@ export function ManualTmdbMatchForm({
   )
   const [selectedCandidate, setSelectedCandidate] = useState<MatchCandidate | null>(null)
   const [seasonNumber, setSeasonNumber] = useState(
-    String(mediaMatch.season_number ?? 1),
+    String(episodeMapping?.seasonNumber ?? 1),
   )
   const [episodeExpression, setEpisodeExpression] = useState(
-    mediaMatch.episode_numbers.join(','),
+    episodeMapping?.episodeNumbers.join(',') ?? '',
   )
+  const [isMappingEdited, setIsMappingEdited] = useState(false)
   const [validationMessage, setValidationMessage] = useState('')
   const previewMutation = useMutation({
     mutationFn: (input: ManualMatchInput) =>
@@ -151,6 +158,7 @@ export function ManualTmdbMatchForm({
     value: string,
   ) => {
     setter(value)
+    setIsMappingEdited(true)
     previewMutation.reset()
   }
 
@@ -224,19 +232,26 @@ export function ManualTmdbMatchForm({
           ) : null}
 
           {selectedCandidate?.media_type === 'TV' ? (
-            <TvEpisodeMappingFields
-              mediaMatchId={mediaMatch.id}
-              seasonNumber={seasonNumber}
-              episodeExpression={episodeExpression}
-              seasons={seasonsQuery.data ?? []}
-              episodes={episodesQuery.data ?? []}
-              onSeasonNumberChange={(value) =>
-                handleMappingChange(setSeasonNumber, value)
-              }
-              onEpisodeExpressionChange={(value) =>
-                handleMappingChange(setEpisodeExpression, value)
-              }
-            />
+            <div className="flex flex-col gap-2">
+              {episodeMapping && !isMappingEdited ? (
+                <p className="text-xs text-muted-foreground" role="status">
+                  已从原文件自动识别：{formatEpisodeMappingLabel(episodeMapping)}
+                </p>
+              ) : null}
+              <TvEpisodeMappingFields
+                mediaMatchId={mediaMatch.id}
+                seasonNumber={seasonNumber}
+                episodeExpression={episodeExpression}
+                seasons={seasonsQuery.data ?? []}
+                episodes={episodesQuery.data ?? []}
+                onSeasonNumberChange={(value) =>
+                  handleMappingChange(setSeasonNumber, value)
+                }
+                onEpisodeExpressionChange={(value) =>
+                  handleMappingChange(setEpisodeExpression, value)
+                }
+              />
+            </div>
           ) : null}
 
           {validationMessage ? <FieldError>{validationMessage}</FieldError> : null}

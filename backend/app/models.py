@@ -94,6 +94,10 @@ class OrganizeJob(Base, TimestampMixin):
     def auto_execute_after_approval(self) -> bool:
         return bool(self.config.get("auto_execute_after_approval", False))
 
+    @property
+    def ai_review_running(self) -> bool:
+        return bool(self.config.get("_ai_review_queued", False))
+
 
 class SourceItem(Base, TimestampMixin):
     __tablename__ = "source_items"

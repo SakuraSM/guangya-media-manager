@@ -104,6 +104,7 @@ class JobView(ApiModel):
     is_cancel_requested: bool
     auto_approve_enabled: bool
     auto_execute_after_approval: bool
+    ai_review_running: bool
     created_at: datetime
     updated_at: datetime
 

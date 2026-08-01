@@ -1,4 +1,4 @@
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
 
 from sqlalchemy import delete, select
@@ -22,7 +22,11 @@ from app.schemas import (
     UpdateMatchRequest,
 )
 from app.schemas import MatchCandidate as MatchCandidateSchema
-from app.services.media_parser import ParsedMediaName, parse_media_filename
+from app.services.media_parser import (
+    ParsedMediaName,
+    parse_bare_episode_numbers,
+    parse_media_filename,
+)
 from app.services.metadata import (
     AiRecognitionService,
     MetadataCandidate,
@@ -33,6 +37,7 @@ from app.services.metadata import (
     TmdbService,
 )
 from app.services.naming import NamingInput, build_target_relative_path
+from app.services.organizer_ai_review import AiReviewWorkflow
 from app.services.organizer_execute import ExecutionWorkflow
 from app.services.organizer_scan import ScanWorkflow, _persist_season_metadata
 from app.services.organizer_support import (
@@ -64,6 +69,13 @@ ACTIVE_JOB_STATUSES = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class ManualEpisodeMappingContext:
+    media_match: MediaMatch
+    request: ManualMatchRequest
+    source_root: str
+
+
 class OrganizerService:
     def __init__(
         self,
@@ -87,6 +99,10 @@ class OrganizerService:
         )
         self._metadata_resolver = MetadataResolver(
             tmdb_service=tmdb_service,
+            ai_service=ai_service,
+        )
+        self._ai_review_workflow = AiReviewWorkflow(
+            session_factory=session_factory,
             ai_service=ai_service,
         )
 
@@ -136,6 +152,45 @@ class OrganizerService:
             return
         if action == "execute":
             await self._execution_workflow.run(job_id)
+            return
+        if action == "ai_review":
+            try:
+                await self._ai_review_workflow.run(job_id)
+            except Exception:
+                async with self._session_factory() as session:
+                    job = await load_job(session, job_id)
+                    job.config = {
+                        key: value
+                        for key, value in job.config.items()
+                        if key != "_ai_review_queued"
+                    }
+                    job.current_stage = "AI 审核中止，未完成项保持待审核"
+                    session.add(
+                        AuditEvent(
+                            job_id=job.id,
+                            event_type="AI_REVIEW_FAILED",
+                            message="AI 审核异常中止，可稍后重试",
+                            severity="error",
+                        )
+                    )
+                    await session.commit()
+                raise
+            async with self._session_factory() as session:
+                job = await load_job(session, job_id)
+                should_auto_execute = job.status == JobStatus.READY and bool(
+                    job.config.get("auto_execute_after_approval", False)
+                )
+                if should_auto_execute:
+                    session.add(
+                        AuditEvent(
+                            job_id=job.id,
+                            event_type="AUTO_EXECUTE_STARTED",
+                            message="AI 审核完成，自动开始整批整理",
+                        )
+                    )
+                    await session.commit()
+            if should_auto_execute:
+                await self._execution_workflow.run(job_id)
             return
         raise OrganizerError(f"Unsupported job action: {action}")
 
@@ -513,15 +568,18 @@ class OrganizerService:
         request: ManualMatchRequest,
         session: AsyncSession,
     ) -> MediaMatch:
-        media_match, _ = await self._load_editable_match(
+        media_match, job = await self._load_editable_match(
             session=session,
             job_id=job_id,
             match_id=match_id,
         )
         candidate = await self._resolve_manual_candidate(request)
         season_number, episode_numbers = _manual_episode_mapping(
-            media_match,
-            request,
+            ManualEpisodeMappingContext(
+                media_match=media_match,
+                request=request,
+                source_root=job.source_directory_path,
+            )
         )
         entity = await persist_metadata_candidate(session, candidate)
         media_match.media_entity_id = entity.id
@@ -745,8 +803,11 @@ class OrganizerService:
         )
         candidate = await self._resolve_manual_candidate(request)
         season_number, episode_numbers = _manual_episode_mapping(
-            media_match,
-            request,
+            ManualEpisodeMappingContext(
+                media_match=media_match,
+                request=request,
+                source_root=job.source_directory_path,
+            )
         )
         parsed = parse_media_filename(
             media_match.source_item.filename,
@@ -945,19 +1006,41 @@ def _target_path_for_candidate(media_match: MediaMatch, candidate: MatchCandidat
 
 
 def _manual_episode_mapping(
-    media_match: MediaMatch,
-    request: ManualMatchRequest,
+    context: ManualEpisodeMappingContext,
 ) -> tuple[int | None, tuple[int, ...]]:
+    media_match = context.media_match
+    request = context.request
     if request.media_type != MediaType.TV:
         return None, ()
+    if request.season_number is not None and request.episode_numbers:
+        episode_numbers = tuple(dict.fromkeys(request.episode_numbers))
+        if any(number <= 0 for number in episode_numbers):
+            raise OrganizerError("集号必须是正整数")
+        return request.season_number, episode_numbers
+    source_path = media_match.source_item.source_path or media_match.source_item.filename
+    parsed = parse_media_filename(
+        media_match.source_item.filename,
+        parent_path=str(PurePosixPath(source_path).parent),
+        source_root=context.source_root,
+    )
+    inferred_episode_numbers = (
+        parsed.episode_numbers
+        or parse_bare_episode_numbers(media_match.source_item.filename)
+    )
     season_number = (
         request.season_number
         if request.season_number is not None
-        else media_match.season_number
+        else media_match.season_number or parsed.season_number
     )
     episode_numbers = tuple(
-        dict.fromkeys(request.episode_numbers or media_match.episode_numbers)
+        dict.fromkeys(
+            request.episode_numbers
+            or media_match.episode_numbers
+            or inferred_episode_numbers
+        )
     )
+    if season_number is None and episode_numbers:
+        season_number = 1
     if any(number <= 0 for number in episode_numbers):
         raise OrganizerError("集号必须是正整数")
     return season_number, episode_numbers
@@ -971,7 +1054,13 @@ def _group_episode_mapping(
     source_root: str,
 ) -> tuple[int | None, tuple[int, ...]]:
     if media_match.id == anchor_match_id:
-        return _manual_episode_mapping(media_match, request)
+        return _manual_episode_mapping(
+            ManualEpisodeMappingContext(
+                media_match=media_match,
+                request=request,
+                source_root=source_root,
+            )
+        )
     if media_match.season_number is not None and media_match.episode_numbers:
         return media_match.season_number, tuple(media_match.episode_numbers)
     parsed = parse_media_filename(
@@ -979,7 +1068,11 @@ def _group_episode_mapping(
         parent_path=str(PurePosixPath(media_match.source_item.source_path).parent),
         source_root=source_root,
     )
-    return parsed.season_number, parsed.episode_numbers
+    episode_numbers = parsed.episode_numbers or parse_bare_episode_numbers(
+        media_match.source_item.filename
+    )
+    season_number = parsed.season_number or (1 if episode_numbers else None)
+    return season_number, episode_numbers
 
 
 def _merge_manual_group_context(

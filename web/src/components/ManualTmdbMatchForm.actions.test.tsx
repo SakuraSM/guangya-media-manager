@@ -95,4 +95,32 @@ describe('ManualTmdbMatchForm', () => {
     fireEvent.click(screen.getByRole('button', { name: '仅应用当前文件' }))
     await waitFor(() => expect(onSubmitCurrent).toHaveBeenCalledOnce())
   })
+
+  it('prefills season and episode from a numeric source filename', async () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ManualTmdbMatchForm
+          jobId="job-1"
+          mediaMatch={{
+            ...MEDIA_MATCH,
+            filename: '12.mkv',
+            source_path: '/媒体/错误剧名/第2季/12.mkv',
+            season_number: null,
+            episode_numbers: [],
+          }}
+          isSaving={false}
+          onSubmitCurrent={vi.fn()}
+          onSubmitGroup={vi.fn()}
+        />
+      </QueryClientProvider>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '搜索并手动匹配 TMDB' }))
+    fireEvent.click(screen.getByRole('button', { name: '搜索 TMDB' }))
+    await screen.findByText('纠正后的剧名')
+
+    expect(screen.getByLabelText('季号')).toHaveValue(2)
+    expect(screen.getByLabelText('集号')).toHaveValue('12')
+    expect(screen.getByText('已从原文件自动识别：S02E12')).toBeVisible()
+  })
 })

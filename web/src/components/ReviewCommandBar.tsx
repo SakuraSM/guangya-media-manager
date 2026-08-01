@@ -57,11 +57,14 @@ interface ReviewCommandBarProps {
   isApprovingSelection: boolean
   isExecuting: boolean
   isCancelling: boolean
+  canStartAiReview: boolean
+  isStartingAiReview: boolean
   onJobChange: (jobId: string) => void
   onApproveGroup: () => void
   onApproveSelection: () => void
   onExecute: () => void
   onCancel: () => void
+  onStartAiReview: () => void
 }
 
 export function ReviewCommandBar({
@@ -75,11 +78,14 @@ export function ReviewCommandBar({
   isApprovingSelection,
   isExecuting,
   isCancelling,
+  canStartAiReview,
+  isStartingAiReview,
   onJobChange,
   onApproveGroup,
   onApproveSelection,
   onExecute,
   onCancel,
+  onStartAiReview,
 }: ReviewCommandBarProps) {
   const canCancel = !NON_CANCELABLE_STATUSES.has(job.status)
   const isRetryingBatch =
@@ -87,6 +93,13 @@ export function ReviewCommandBar({
     (job.failed_items > 0 || Boolean(job.error_message))
   const canExecute = job.status === JOB_STATUS.READY || isRetryingBatch
   const progressPercentage = Math.round(job.progress * PERCENT_SCALE)
+  const isSelectionApproval = selectedCount > 0
+  const canApproveContext = isSelectionApproval
+    ? canApproveSelection
+    : canApproveGroup
+  const isApprovingContext = isSelectionApproval
+    ? isApprovingSelection
+    : isApprovingGroup
 
   return (
     <Card>
@@ -150,28 +163,71 @@ export function ReviewCommandBar({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 self-center md:col-span-2 md:grid-cols-4 xl:col-span-1 xl:grid-cols-2">
-          <Button
-            type="button"
-            disabled={!canApproveSelection || isApprovingSelection}
-            onClick={onApproveSelection}
-          >
-            <ListChecks data-icon="inline-start" aria-hidden="true" />
-            {isApprovingSelection ? '正在批准' : `批准已选（${selectedCount}）`}
-          </Button>
-          <Button
-            variant="outline"
-            type="button"
-            disabled={!canApproveGroup || isApprovingGroup}
-            onClick={onApproveGroup}
-          >
-            <CheckCircle2 data-icon="inline-start" aria-hidden="true" />
-            批准当前整组
-          </Button>
+        <div className="flex flex-wrap items-center justify-end gap-2 self-center md:col-span-2 xl:col-span-1">
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button
                 variant="outline"
+                type="button"
+                disabled={!canStartAiReview || isStartingAiReview}
+              >
+                <Bot data-icon="inline-start" aria-hidden="true" />
+                {isStartingAiReview ? 'AI 正在审核' : 'AI 审核待确认项'}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>授权 AI 审核作品名称？</AlertDialogTitle>
+                <AlertDialogDescription asChild>
+                  <div className="space-y-3 text-sm leading-relaxed">
+                    <p>
+                      AI 会按影视分组对比父目录、文件名和 TMDB 候选，只在作品名称与电影/电视剧类型明确一致时批准。
+                    </p>
+                    <ul className="list-disc space-y-1 pl-5">
+                      <li>不会判断季号、集号、单集标题或单集顺序。</li>
+                      <li>已经通过的高置信记录不会重复处理。</li>
+                      <li>证据不足或审核失败的分组会保留，继续由你手动确认。</li>
+                    </ul>
+                  </div>
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>暂不审核</AlertDialogCancel>
+                <AlertDialogAction onClick={onStartAiReview}>
+                  开始 AI 审核
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+          <Button
+            variant="outline"
+            type="button"
+            disabled={!canApproveContext || isApprovingContext}
+            onClick={isSelectionApproval ? onApproveSelection : onApproveGroup}
+          >
+            {isSelectionApproval ? (
+              <ListChecks data-icon="inline-start" aria-hidden="true" />
+            ) : (
+              <CheckCircle2 data-icon="inline-start" aria-hidden="true" />
+            )}
+            {isApprovingContext
+              ? '正在批准'
+              : isSelectionApproval
+                ? `批准已选（${selectedCount}）`
+                : '批准当前整组'}
+          </Button>
+          <Button type="button" disabled={!canExecute || isExecuting} onClick={onExecute}>
+            <Play data-icon="inline-start" aria-hidden="true" />
+            {isExecuting
+              ? '正在提交整批任务'
+              : isRetryingBatch
+                ? '重试整批执行'
+                : '确认并整批执行'}
+          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                variant="ghost"
                 type="button"
                 disabled={!canCancel || isCancelling || job.is_cancel_requested}
               >
@@ -192,14 +248,6 @@ export function ReviewCommandBar({
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
-          <Button type="button" disabled={!canExecute || isExecuting} onClick={onExecute}>
-            <Play data-icon="inline-start" aria-hidden="true" />
-            {isExecuting
-              ? '正在提交整批任务'
-              : isRetryingBatch
-                ? '重试整批执行'
-                : '确认并整批执行'}
-          </Button>
         </div>
       </CardContent>
     </Card>

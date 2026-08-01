@@ -3,6 +3,7 @@ import {
   CircleAlert,
   CircleSlash,
   FolderOutput,
+  MoreHorizontal,
   RefreshCcw,
   RotateCcw,
   Undo2,
@@ -31,6 +32,13 @@ import { Field, FieldLabel } from '@/components/ui/field'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 interface MatchInspectorProps {
   jobId: string
@@ -85,7 +93,10 @@ export function MatchInspector({
     null
 
   return (
-    <aside className="flex h-full min-h-0 flex-col bg-card" aria-labelledby="inspector-title">
+    <aside
+      className="flex h-full min-h-0 flex-col overflow-hidden bg-card"
+      aria-labelledby="inspector-title"
+    >
       <div className="shrink-0 border-b px-4 py-3">
         <span className="text-xs text-muted-foreground">待审核项详情</span>
         <h2 id="inspector-title" className="mt-1 truncate text-sm font-medium">
@@ -168,19 +179,10 @@ export function MatchInspector({
           />
         </div>
       </ScrollArea>
-      <div className="grid shrink-0 gap-2 border-t bg-card p-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+      <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 border-t bg-card p-3">
         <Button type="button" disabled={!selectedCandidate || isSaving} onClick={onApprove}>
           <Check data-icon="inline-start" aria-hidden="true" />
-          采用此匹配
-        </Button>
-        <Button
-          variant="outline"
-          type="button"
-          disabled={isSaving || isRetrying}
-          onClick={onRetry}
-        >
-          <RotateCcw data-icon="inline-start" aria-hidden="true" />
-          {isRetrying ? '正在重试' : '重试此文件'}
+          采用当前候选
         </Button>
         <Button
           variant="outline"
@@ -189,16 +191,37 @@ export function MatchInspector({
           onClick={onRetryGroup}
         >
           <RefreshCcw data-icon="inline-start" aria-hidden="true" />
-          {isRetryingGroup ? '正在重试整组' : '重试整个影视组'}
+          {isRetryingGroup ? '正在识别整组' : '重新识别整组'}
         </Button>
-        <Button variant="outline" type="button" disabled={isSaving} onClick={onToggleIgnore}>
-          {mediaMatch.decision === MATCH_DECISION.IGNORED ? (
-            <Undo2 data-icon="inline-start" aria-hidden="true" />
-          ) : (
-            <CircleSlash data-icon="inline-start" aria-hidden="true" />
-          )}
-          {mediaMatch.decision === MATCH_DECISION.IGNORED ? '恢复审核' : '忽略此文件'}
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="icon" type="button" aria-label="更多审核操作">
+              <MoreHorizontal aria-hidden="true" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              disabled={isSaving || isRetrying}
+              onSelect={onRetry}
+            >
+              <RotateCcw aria-hidden="true" />
+              {isRetrying ? '正在重新识别此文件' : '仅重新识别此文件'}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              disabled={isSaving}
+              onSelect={onToggleIgnore}
+            >
+              {mediaMatch.decision === MATCH_DECISION.IGNORED ? (
+                <Undo2 aria-hidden="true" />
+              ) : (
+                <CircleSlash aria-hidden="true" />
+              )}
+              {mediaMatch.decision === MATCH_DECISION.IGNORED ? '恢复审核' : '忽略此文件'}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </aside>
   )

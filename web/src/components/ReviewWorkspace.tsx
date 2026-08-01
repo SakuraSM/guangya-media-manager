@@ -1,6 +1,11 @@
 import { useState } from 'react'
 import { FolderTree } from 'lucide-react'
-import type { ManualMatchInput, MediaMatch, MediaMatchPage } from '@/types'
+import type {
+  ManualMatchInput,
+  MediaMatch,
+  MediaMatchPage,
+  ReviewFilter,
+} from '@/types'
 import type { MediaMatchGroup } from '@/utils/reviewGrouping'
 import { GroupedMatchTable } from '@/components/GroupedMatchTable'
 import { MatchInspector } from '@/components/MatchInspector'
@@ -35,6 +40,7 @@ interface ReviewWorkspaceProps {
   selectedMatch: MediaMatch | null
   selectedMatchIds: ReadonlySet<string>
   isSelectionEnabled: boolean
+  reviewFilter: ReviewFilter
   selectedCandidateId: number | null
   isFetching: boolean
   isSaving: boolean
@@ -43,6 +49,7 @@ interface ReviewWorkspaceProps {
   onSelectMatch: (mediaMatch: MediaMatch) => void
   onToggleMatchSelection: (matchId: string) => void
   onTogglePageSelection: () => void
+  onReviewFilterChange: (value: ReviewFilter) => void
   onSelectCandidate: (candidateId: number) => void
   onApprove: () => void
   onToggleIgnore: () => void
@@ -79,9 +86,12 @@ export function ReviewWorkspace(props: ReviewWorkspaceProps) {
       selectedMatchId={props.selectedMatch?.id ?? null}
       selectedMatchIds={props.selectedMatchIds}
       isSelectionEnabled={props.isSelectionEnabled}
+      reviewFilter={props.reviewFilter}
+      isFilterLoading={props.isFetching}
       onSelectMatch={onSelectMatch}
       onToggleSelection={props.onToggleMatchSelection}
       onTogglePageSelection={props.onTogglePageSelection}
+      onReviewFilterChange={props.onReviewFilterChange}
       leadingAction={leadingAction}
     />
   )

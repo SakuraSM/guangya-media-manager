@@ -14,6 +14,7 @@ from app.database import SessionFactory
 from app.domain import (
     JobStatus,
     MatchDecision,
+    MatchReviewState,
     MediaType,
     OperationStatus,
     OperationType,
@@ -136,11 +137,26 @@ async def list_matches(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=100),
     decision: MatchDecision | None = None,
+    review_state: MatchReviewState | None = None,
 ) -> MediaMatchPage:
     await _get_job_or_404(session, job_id)
     filters = [SourceItem.job_id == job_id]
     if decision is not None:
         filters.append(MediaMatch.decision == decision)
+    if review_state == MatchReviewState.PENDING:
+        filters.append(
+            MediaMatch.decision.in_([MatchDecision.REVIEW, MatchDecision.UNRESOLVED])
+        )
+    elif review_state == MatchReviewState.REVIEWED:
+        filters.append(
+            MediaMatch.decision.in_(
+                [
+                    MatchDecision.AUTO_APPROVED,
+                    MatchDecision.APPROVED,
+                    MatchDecision.IGNORED,
+                ]
+            )
+        )
     total = await session.scalar(select(func.count(MediaMatch.id)).join(SourceItem).where(*filters))
     match_count = total or 0
     statement = (
@@ -433,6 +449,63 @@ async def batch_approve_matches(
         raise _organizer_http_error(error) from error
     await _enqueue_auto_execute_if_ready(job_id, session, services)
     return BatchApproveMatchesResult(updated_items=updated_items)
+
+
+@router.post(
+    "/{job_id}/matches/ai-review",
+    response_model=JobView,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_ai_review(
+    job_id: str,
+    session: DatabaseSession,
+    services: Services,
+) -> OrganizeJob:
+    job = await _get_job_or_404(session, job_id)
+    if job.status not in {
+        JobStatus.REVIEW_REQUIRED,
+        JobStatus.READY,
+        JobStatus.FAILED,
+    }:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="当前任务状态不能进行 AI 审核",
+        )
+    if not services.ai_service.is_configured:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="尚未配置 AI 服务，请先在设置中填写 AI Provider",
+        )
+    if job.ai_review_running:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="AI 审核已经在进行中",
+        )
+    if job.review_items == 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="没有需要 AI 审核的记录",
+        )
+    job.config = {**job.config, "_ai_review_queued": True}
+    job.current_stage = "等待 AI 审核作品名称"
+    session.add(
+        AuditEvent(
+            job_id=job.id,
+            event_type="AI_REVIEW_QUEUED",
+            message="已授权 AI 按目录和文件名审核作品名称",
+        )
+    )
+    await session.commit()
+    try:
+        await services.queue.enqueue("ai_review", job.id)
+    except Exception:
+        job.config = {
+            key: value for key, value in job.config.items() if key != "_ai_review_queued"
+        }
+        job.current_stage = "AI 审核入队失败，可重试"
+        await session.commit()
+        raise
+    return job
 
 
 @router.put("/{job_id}/matches/{match_id}", response_model=MediaMatchView)

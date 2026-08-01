@@ -33,6 +33,14 @@ export const MATCH_DECISION = {
 } as const
 
 export type MatchDecision = (typeof MATCH_DECISION)[keyof typeof MATCH_DECISION]
+
+export const REVIEW_FILTER = {
+  PENDING: 'PENDING',
+  REVIEWED: 'REVIEWED',
+  ALL: 'ALL',
+} as const
+
+export type ReviewFilter = (typeof REVIEW_FILTER)[keyof typeof REVIEW_FILTER]
 export type MediaType = 'MOVIE' | 'TV' | 'UNKNOWN'
 
 export const SOURCE_CLASSIFICATION = {
@@ -105,6 +113,7 @@ export interface Job {
   is_cancel_requested: boolean
   auto_approve_enabled: boolean
   auto_execute_after_approval: boolean
+  ai_review_running: boolean
   created_at: string
   updated_at: string
 }

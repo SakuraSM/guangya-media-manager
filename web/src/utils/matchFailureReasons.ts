@@ -16,6 +16,9 @@ const REASON_MESSAGES: Readonly<Record<string, string>> = {
   TMDB_AI_QUERY_FAILED: 'AI 辅助识别后，再次查询 TMDB 失败。',
   TMDB_AI_QUERY_NO_RESULTS: 'AI 辅助识别后，TMDB 仍未找到候选。',
   AI_MANUAL_CONFIRMATION_REQUIRED: '此候选由 AI 辅助识别，必须人工确认。',
+  AI_REVIEW_RETAINED: 'AI 无法确认作品名称和类型一致，已保留人工审核。',
+  AI_REVIEW_NO_CANDIDATE: '当前影视分组没有可供 AI 审核的 TMDB 候选。',
+  AI_REVIEW_GROUP_CANDIDATE_MISSING: '该文件缺少整组采用的 TMDB 候选，未自动批准。',
 }
 
 export function isMetadataPending(mediaMatch: MediaMatch): boolean {

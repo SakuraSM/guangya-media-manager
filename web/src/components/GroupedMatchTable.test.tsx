@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import type { MediaMatch } from '../types'
+import { REVIEW_FILTER, type MediaMatch } from '../types'
 import { groupMediaMatches } from '../utils/reviewGrouping'
 import { GroupedMatchTable } from './GroupedMatchTable'
 
@@ -50,9 +50,12 @@ describe('GroupedMatchTable', () => {
         selectedMatchId={null}
         selectedMatchIds={new Set()}
         isSelectionEnabled
+        reviewFilter={REVIEW_FILTER.PENDING}
+        isFilterLoading={false}
         onSelectMatch={vi.fn()}
         onToggleSelection={handleToggleSelection}
         onTogglePageSelection={vi.fn()}
+        onReviewFilterChange={vi.fn()}
       />,
     )
 
@@ -70,9 +73,12 @@ describe('GroupedMatchTable', () => {
         selectedMatchId={null}
         selectedMatchIds={new Set()}
         isSelectionEnabled
+        reviewFilter={REVIEW_FILTER.PENDING}
+        isFilterLoading={false}
         onSelectMatch={vi.fn()}
         onToggleSelection={vi.fn()}
         onTogglePageSelection={vi.fn()}
+        onReviewFilterChange={vi.fn()}
       />,
     )
 
@@ -95,9 +101,12 @@ describe('GroupedMatchTable', () => {
         selectedMatchId={null}
         selectedMatchIds={new Set()}
         isSelectionEnabled
+        reviewFilter={REVIEW_FILTER.PENDING}
+        isFilterLoading={false}
         onSelectMatch={vi.fn()}
         onToggleSelection={vi.fn()}
         onTogglePageSelection={vi.fn()}
+        onReviewFilterChange={vi.fn()}
       />,
     )
 
@@ -130,9 +139,12 @@ describe('GroupedMatchTable', () => {
           selectedMatchId={APPROVABLE_MATCH.id}
           selectedMatchIds={new Set()}
           isSelectionEnabled
+          reviewFilter={REVIEW_FILTER.PENDING}
+          isFilterLoading={false}
           onSelectMatch={vi.fn()}
           onToggleSelection={vi.fn()}
           onTogglePageSelection={vi.fn()}
+          onReviewFilterChange={vi.fn()}
         />,
       )
 
@@ -141,5 +153,28 @@ describe('GroupedMatchTable', () => {
       boundsSpy.mockRestore()
       Reflect.deleteProperty(HTMLElement.prototype, 'scrollTo')
     }
+  })
+
+  it('switches between pending and reviewed records', () => {
+    const handleReviewFilterChange = vi.fn()
+
+    render(
+      <GroupedMatchTable
+        groups={groupMediaMatches([APPROVABLE_MATCH])}
+        selectedMatchId={null}
+        selectedMatchIds={new Set()}
+        isSelectionEnabled
+        reviewFilter={REVIEW_FILTER.PENDING}
+        isFilterLoading={false}
+        onSelectMatch={vi.fn()}
+        onToggleSelection={vi.fn()}
+        onTogglePageSelection={vi.fn()}
+        onReviewFilterChange={handleReviewFilterChange}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '已审核' }))
+
+    expect(handleReviewFilterChange).toHaveBeenCalledWith(REVIEW_FILTER.REVIEWED)
   })
 })

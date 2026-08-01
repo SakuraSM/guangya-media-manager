@@ -54,15 +54,21 @@ describe('MatchInspector', () => {
       </QueryClientProvider>,
     )
 
-    expect(screen.getByRole('button', { name: '采用此匹配' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '采用当前候选' })).toBeDisabled()
     expect(
       screen.getByText('TMDB 请求失败，请检查网络或 API Token。'),
     ).toBeInTheDocument()
     expect(screen.getByText('原始文件')).toBeVisible()
     expect(screen.getAllByText(UNRESOLVED_MATCH.filename).length).toBeGreaterThan(0)
     expect(screen.getByText(UNRESOLVED_MATCH.source_path)).toBeVisible()
-    fireEvent.click(screen.getByRole('button', { name: '忽略此文件' }))
-    fireEvent.click(screen.getByRole('button', { name: '重试此文件' }))
+    fireEvent.keyDown(screen.getByRole('button', { name: '更多审核操作' }), {
+      key: 'Enter',
+    })
+    fireEvent.click(screen.getByRole('menuitem', { name: '忽略此文件' }))
+    fireEvent.keyDown(screen.getByRole('button', { name: '更多审核操作' }), {
+      key: 'Enter',
+    })
+    fireEvent.click(screen.getByRole('menuitem', { name: '仅重新识别此文件' }))
     fireEvent.click(screen.getByRole('button', { name: '搜索并手动匹配 TMDB' }))
 
     expect(handleToggleIgnore).toHaveBeenCalledOnce()

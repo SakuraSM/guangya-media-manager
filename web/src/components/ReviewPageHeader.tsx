@@ -14,11 +14,14 @@ interface ReviewPageHeaderProps {
   isApprovingSelection: boolean
   isExecuting: boolean
   isCancelling: boolean
+  canStartAiReview: boolean
+  isStartingAiReview: boolean
   actionMessage: string
   onApproveGroup: () => void
   onApproveSelection: () => void
   onExecute: () => void
   onCancel: () => void
+  onStartAiReview: () => void
 }
 
 export function ReviewPageHeader({
@@ -32,11 +35,14 @@ export function ReviewPageHeader({
   isApprovingSelection,
   isExecuting,
   isCancelling,
+  canStartAiReview,
+  isStartingAiReview,
   actionMessage,
   onApproveGroup,
   onApproveSelection,
   onExecute,
   onCancel,
+  onStartAiReview,
 }: ReviewPageHeaderProps) {
   const handleJobChange = (jobId: string) => {
     window.location.assign(`/review?job=${encodeURIComponent(jobId)}`)
@@ -55,11 +61,14 @@ export function ReviewPageHeader({
         isApprovingSelection={isApprovingSelection}
         isExecuting={isExecuting}
         isCancelling={isCancelling}
+        canStartAiReview={canStartAiReview}
+        isStartingAiReview={isStartingAiReview}
         onJobChange={handleJobChange}
         onApproveGroup={onApproveGroup}
         onApproveSelection={onApproveSelection}
         onExecute={onExecute}
         onCancel={onCancel}
+        onStartAiReview={onStartAiReview}
       />
       {actionMessage ? (
         <Alert className="border-success/20 bg-success/5 text-success" role="status">

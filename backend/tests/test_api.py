@@ -100,6 +100,36 @@ def test_paginates_match_results() -> None:
     assert len(payload["items"]) == 2
 
 
+def test_filters_pending_and_reviewed_match_results_before_pagination() -> None:
+    with TestClient(app) as client:
+        client.post("/api/session/login", json={"password": "change-me"})
+        jobs = client.get("/api/jobs").json()
+        review_job = next(job for job in jobs if job["status"] == "REVIEW_REQUIRED")
+
+        pending_response = client.get(
+            f"/api/jobs/{review_job['id']}/matches",
+            params={"review_state": "PENDING"},
+        )
+        reviewed_response = client.get(
+            f"/api/jobs/{review_job['id']}/matches",
+            params={"review_state": "REVIEWED"},
+        )
+
+    assert pending_response.status_code == 200
+    pending_payload = pending_response.json()
+    assert pending_payload["total"] == 2
+    assert {item["decision"] for item in pending_payload["items"]} == {
+        "REVIEW",
+        "UNRESOLVED",
+    }
+    assert reviewed_response.status_code == 200
+    reviewed_payload = reviewed_response.json()
+    assert reviewed_payload["total"] == 2
+    assert {item["decision"] for item in reviewed_payload["items"]} == {
+        "AUTO_APPROVED",
+    }
+
+
 def test_paginates_job_list() -> None:
     with TestClient(app) as client:
         client.post("/api/session/login", json={"password": "change-me"})

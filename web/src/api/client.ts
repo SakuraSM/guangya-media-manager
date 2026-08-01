@@ -17,6 +17,7 @@ import type {
   MatchDecision,
   MediaMatch,
   MediaMatchPage,
+  ReviewFilter,
   SourceAction,
   SourceItem,
   SessionState,
@@ -60,6 +61,7 @@ interface GetMatchesInput {
   jobId: string
   page: number
   pageSize: number
+  reviewFilter: ReviewFilter
 }
 
 interface MatchActionInput {
@@ -148,11 +150,14 @@ export const api = {
     requestJson<Job>(`/jobs/${jobId}/execute`, { method: 'POST' }),
   cancelJob: (jobId: string) =>
     requestJson<Job>(`/jobs/${jobId}/cancel`, { method: 'POST' }),
-  getMatches: ({ jobId, page, pageSize }: GetMatchesInput) => {
+  getMatches: ({ jobId, page, pageSize, reviewFilter }: GetMatchesInput) => {
     const query = new URLSearchParams({
       page: String(page),
       page_size: String(pageSize),
     })
+    if (reviewFilter !== 'ALL') {
+      query.set('review_state', reviewFilter)
+    }
     return requestJson<MediaMatchPage>(`/jobs/${jobId}/matches?${query.toString()}`)
   },
   getSourceItems: (jobId: string) =>
@@ -205,6 +210,10 @@ export const api = {
           candidate_tmdb_id: item.candidateTmdbId,
         })),
       }),
+    }),
+  startAiReview: (jobId: string) =>
+    requestJson<Job>(`/jobs/${jobId}/matches/ai-review`, {
+      method: 'POST',
     }),
   retryMatch: ({ jobId, matchId }: MatchActionInput) =>
     requestJson<MediaMatch>(`/jobs/${jobId}/matches/${matchId}/retry`, {

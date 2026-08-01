@@ -14,6 +14,7 @@ from app.services.metadata import (
     MetadataResolver,
     TmdbService,
     parse_ai_recognition,
+    parse_ai_title_review,
 )
 
 
@@ -35,6 +36,67 @@ def test_parses_fenced_ai_json_and_nullable_optional_fields() -> None:
     assert recognition.media_type == MediaType.TV
     assert recognition.edition == ""
     assert recognition.episodes == [1]
+
+
+def test_parses_verbose_ai_response_with_common_field_aliases() -> None:
+    recognition = parse_ai_recognition(
+        """识别结果如下：
+        {
+          "mediaType": "series",
+          "seriesTitle": "择天记",
+          "year": "2017",
+          "seasonNumber": "1",
+          "episodeNumbers": 52,
+          "confidence": null
+        }
+        以上结果基于父目录。"""
+    )
+
+    assert recognition.media_type == MediaType.TV
+    assert recognition.title == "择天记"
+    assert recognition.year == 2017
+    assert recognition.season == 1
+    assert recognition.episodes == [52]
+    assert recognition.confidence == 0.5
+
+
+def test_parses_fenced_ai_title_review_without_episode_assumptions() -> None:
+    review = parse_ai_title_review(
+        """```json
+        {"isMatch": true, "confidence": 0.93, "reason": "父目录与候选剧名一致"}
+        ```"""
+    )
+
+    assert review.is_match is True
+    assert review.confidence == 0.93
+    assert review.reason == "父目录与候选剧名一致"
+
+
+async def test_ai_title_review_only_checks_work_title_and_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_client = RecordingTitleReviewAsyncClient()
+    monkeypatch.setattr(
+        "app.services.metadata.httpx.AsyncClient",
+        lambda **_: fake_client,
+    )
+    service = AiRecognitionService(
+        Settings(
+            ai_api_key="test-key",
+            ai_base_url="https://example.invalid/v1",
+            ai_model="test-model",
+        )
+    )
+
+    verdict = await service.review_title_match(
+        candidate=metadata_candidate("爱情公寓", media_type=MediaType.TV),
+        parent_paths=("爱情公寓/第一季",),
+        filenames=("01.mp4", "02.mp4"),
+    )
+
+    assert verdict.is_match is True
+    assert fake_client.user_payload["filenames"] == ["01.mp4", "02.mp4"]
+    assert "不要判断季号、集号" in fake_client.system_prompt
 
 
 async def test_ai_failure_retries_then_returns_rule_fallback(
@@ -183,6 +245,15 @@ async def test_ai_receives_the_whole_media_group(
         "示例剧/02.mp4",
         "示例剧/03.mp4",
     ]
+    assert fake_client.user_payload["rule_result"] == {
+        "media_type": "MOVIE",
+        "title": "示例剧",
+        "year": None,
+        "season": None,
+        "episodes": [],
+    }
+    assert "纯数字文件名" in fake_client.system_prompt
+    assert "集数范围" in fake_client.system_prompt
 
 
 @dataclass
@@ -315,6 +386,7 @@ class RecordingGroupAsyncClient(FakeAsyncClient):
     def __init__(self) -> None:
         super().__init__()
         self.user_payload: dict[str, object] = {}
+        self.system_prompt = ""
 
     async def post(self, *_: object, **kwargs: object) -> FakeResponse:
         self.request_count += 1
@@ -322,6 +394,11 @@ class RecordingGroupAsyncClient(FakeAsyncClient):
         assert isinstance(request_json, dict)
         messages = request_json.get("messages")
         assert isinstance(messages, list)
+        system_message = messages[0]
+        assert isinstance(system_message, dict)
+        system_content = system_message.get("content")
+        assert isinstance(system_content, str)
+        self.system_prompt = system_content
         user_message = messages[1]
         assert isinstance(user_message, dict)
         content = user_message.get("content")
@@ -330,3 +407,28 @@ class RecordingGroupAsyncClient(FakeAsyncClient):
         assert isinstance(payload, dict)
         self.user_payload = payload
         return ValidRecognitionResponse()
+
+
+class ValidTitleReviewResponse(FakeResponse):
+    def json(self) -> dict[str, object]:
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "is_match": True,
+                                "confidence": 0.91,
+                                "reason": "作品名称一致",
+                            }
+                        )
+                    }
+                }
+            ]
+        }
+
+
+class RecordingTitleReviewAsyncClient(RecordingGroupAsyncClient):
+    async def post(self, *_: object, **kwargs: object) -> FakeResponse:
+        await super().post(**kwargs)
+        return ValidTitleReviewResponse()

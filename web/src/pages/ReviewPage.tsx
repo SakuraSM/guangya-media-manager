@@ -9,8 +9,8 @@ import { ScanSummaryPanel } from '../components/ScanSummaryPanel'
 import { useBatchApproval } from '../hooks/useBatchApproval'
 import { useReviewQueries } from '../hooks/useReviewQueries'
 import {
-  JOB_STATUS, MATCH_DECISION, type ManualMatchInput, type MatchDecision,
-  type MediaMatch, type SourceAction,
+  JOB_STATUS, MATCH_DECISION, REVIEW_FILTER, type ManualMatchInput,
+  type MatchDecision, type MediaMatch, type ReviewFilter, type SourceAction,
 } from '../types'
 import { groupMediaMatches, isEditableJobStatus, isReviewDecision } from '../utils/reviewGrouping'
 const DEFAULT_PAGE_SIZE = 20
@@ -18,6 +18,9 @@ export function ReviewPage() {
   const queryClient = useQueryClient()
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
+  const [reviewFilter, setReviewFilter] = useState<ReviewFilter>(
+    REVIEW_FILTER.PENDING,
+  )
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null)
   const [selectedCandidateId, setSelectedCandidateId] = useState<number | null>(null)
   const [actionMessage, setActionMessage] = useState('')
@@ -30,6 +33,7 @@ export function ReviewPage() {
   } = useReviewQueries({
     page,
     pageSize,
+    reviewFilter,
   })
   const selectedMatch = useMemo(() => {
     const pageMatches = matchesQuery.data?.items ?? []
@@ -157,6 +161,15 @@ export function ReviewPage() {
       await refreshReviewData()
     },
   })
+  const aiReviewMutation = useMutation({
+    mutationFn: () => api.startAiReview(selectedJobId),
+    onSuccess: async () => {
+      setActionMessage(
+        'AI 作品级审核已开始；只核对目录、文件名与影视名称和类型，不判断单集序号。',
+      )
+      await refreshReviewData()
+    },
+  })
   const groupUpdateMutation = useMutation({
     mutationFn: () => {
       if (!selectedMatch || effectiveCandidateId === null) {
@@ -207,7 +220,7 @@ export function ReviewPage() {
   const job = jobQuery.data
   const matchPage = matchesQuery.data
   const matchGroups = groupMediaMatches(matchPage.items)
-  const isJobEditable = isEditableJobStatus(job.status)
+  const isJobEditable = isEditableJobStatus(job.status) && !job.ai_review_running
   const mutationError = [
     updateMutation.error,
     retryMutation.error,
@@ -216,6 +229,7 @@ export function ReviewPage() {
     manualGroupMatchMutation.error,
     executeMutation.error,
     cancelMutation.error,
+    aiReviewMutation.error,
     groupUpdateMutation.error,
     sourceItemMutation.error,
     batchApproval.error,
@@ -235,6 +249,10 @@ export function ReviewPage() {
   }
   const handlePageSizeChange = (nextPageSize: number) => {
     setPageSize(nextPageSize)
+    handlePageChange(1)
+  }
+  const handleReviewFilterChange = (nextFilter: ReviewFilter) => {
+    setReviewFilter(nextFilter)
     handlePageChange(1)
   }
   const handleApprove = () => {
@@ -291,11 +309,14 @@ export function ReviewPage() {
         isApprovingSelection={batchApproval.isPending}
         isExecuting={executeMutation.isPending}
         isCancelling={cancelMutation.isPending}
+        canStartAiReview={isJobEditable && job.review_items > 0}
+        isStartingAiReview={aiReviewMutation.isPending || job.ai_review_running}
         actionMessage={actionMessage}
         onApproveGroup={() => groupUpdateMutation.mutate()}
         onApproveSelection={batchApproval.approveSelected}
         onExecute={() => executeMutation.mutate()}
         onCancel={() => cancelMutation.mutate()}
+        onStartAiReview={() => aiReviewMutation.mutate()}
       />
       <ScanSummaryPanel
         items={sourceItemsQuery.data}
@@ -312,6 +333,7 @@ export function ReviewPage() {
         selectedMatch={selectedMatch}
         selectedMatchIds={batchApproval.selectedMatchIds}
         isSelectionEnabled={isJobEditable && !batchApproval.isPending}
+        reviewFilter={reviewFilter}
         selectedCandidateId={effectiveCandidateId}
         isFetching={matchesQuery.isFetching}
         isSaving={
@@ -326,6 +348,7 @@ export function ReviewPage() {
         onSelectMatch={handleSelectMatch}
         onToggleMatchSelection={batchApproval.toggleMatchSelection}
         onTogglePageSelection={batchApproval.togglePageSelection}
+        onReviewFilterChange={handleReviewFilterChange}
         onSelectCandidate={setSelectedCandidateId}
         onApprove={handleApprove}
         onToggleIgnore={handleToggleIgnore}
