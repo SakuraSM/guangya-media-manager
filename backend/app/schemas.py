@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.domain import (
     AccountStatus,
@@ -120,6 +120,8 @@ class JobPage(BaseModel):
 
 class MatchCandidate(BaseModel):
     tmdb_id: int
+    provider: MetadataSource = MetadataSource.TMDB
+    provider_id: str | None = None
     title: str
     original_title: str = ""
     year: int | None = None
@@ -146,6 +148,11 @@ class MediaMatchView(ApiModel):
     decision: MatchDecision
     selected_tmdb_id: int | None
     metadata_source: MetadataSource | None = None
+    metadata_provider: MetadataSource | None = None
+    provider_id: str | None = None
+    match_origin: str = "RULE"
+    metadata_hint: dict[str, object] = Field(default_factory=dict)
+    decision_reasons: list[dict[str, object]] = Field(default_factory=list)
     candidates: list[MatchCandidate]
     target_path: str
     reason_codes: list[str]
@@ -185,6 +192,8 @@ class UpdateSourceItemRequest(BaseModel):
 class UpdateMediaGroupRequest(BaseModel):
     decision: MatchDecision
     candidate_tmdb_id: int | None = None
+    provider: MetadataSource | None = None
+    provider_id: str | None = None
 
 
 class MediaGroupUpdateResult(BaseModel):
@@ -195,11 +204,57 @@ class MediaGroupUpdateResult(BaseModel):
 class UpdateMatchRequest(BaseModel):
     decision: MatchDecision
     candidate_tmdb_id: int | None = None
+    provider: MetadataSource | None = None
+    provider_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_provider_identity(self) -> "UpdateMatchRequest":
+        if (self.provider is None) != (self.provider_id is None):
+            raise ValueError("provider and provider_id must be provided together")
+        if (
+            self.candidate_tmdb_id is not None
+            and self.provider is not None
+            and (
+                self.provider != MetadataSource.TMDB
+                or self.provider_id != str(self.candidate_tmdb_id)
+            )
+        ):
+            raise ValueError("legacy and generic candidate identities conflict")
+        return self
+
+    def resolved_tmdb_id(self) -> int | None:
+        if self.candidate_tmdb_id is not None:
+            return self.candidate_tmdb_id
+        if self.provider == MetadataSource.TMDB and self.provider_id and self.provider_id.isdigit():
+            return int(self.provider_id)
+        return None
+
+
+class MetadataProviderView(BaseModel):
+    provider: MetadataSource
+    display_name: str
+    enabled: bool
+    capabilities: dict[str, object]
 
 
 class BatchMatchApprovalItem(BaseModel):
     match_id: str = Field(min_length=1, max_length=64)
-    candidate_tmdb_id: int = Field(gt=0)
+    candidate_tmdb_id: int | None = Field(default=None, gt=0)
+    provider: MetadataSource | None = None
+    provider_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_candidate_identity(self) -> "BatchMatchApprovalItem":
+        if self.candidate_tmdb_id is None and not (
+            self.provider == MetadataSource.TMDB
+            and self.provider_id
+            and self.provider_id.isdigit()
+        ):
+            raise ValueError("a TMDB candidate identity is required")
+        return self
+
+    def resolved_tmdb_id(self) -> int:
+        return self.candidate_tmdb_id or int(self.provider_id or "0")
 
 
 class BatchApproveMatchesRequest(BaseModel):

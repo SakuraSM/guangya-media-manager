@@ -1,9 +1,11 @@
+import httpx
 import pytest
 
 from app.providers.guangya import (
     GuangyaProvider,
     GuangyaProviderError,
     _to_cloud_node,
+    _validate_download_url,
 )
 
 
@@ -34,3 +36,17 @@ async def test_refresh_converts_client_failure_to_provider_error() -> None:
 
     with pytest.raises(GuangyaProviderError, match="token refresh failed"):
         await provider.refresh_tokens("expired-refresh-token")
+
+
+@pytest.mark.parametrize(
+    "url",
+    (
+        "http://cdn.example.com/file.nfo",
+        "https://localhost/file.nfo",
+        "https://127.0.0.1/file.nfo",
+        "https://169.254.169.254/latest/meta-data",
+    ),
+)
+def test_small_file_download_rejects_unsafe_urls(url: str) -> None:
+    with pytest.raises(GuangyaProviderError, match="not allowed"):
+        _validate_download_url(httpx.URL(url))

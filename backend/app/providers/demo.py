@@ -14,6 +14,7 @@ class DemoGuangyaProvider:
         self._poll_counts: defaultdict[str, int] = defaultdict(int)
         self._nodes = _build_demo_nodes()
         self._task_outputs: dict[str, list[str]] = {}
+        self._file_contents: dict[str, bytes] = {}
 
     def set_tokens(self, access_token: str, refresh_token: str) -> None:
         return None
@@ -124,7 +125,16 @@ class DemoGuangyaProvider:
             size_bytes=len(content),
         )
         self._nodes.append(node)
+        self._file_contents[node.id] = content
         return node
+
+    async def read_bytes(self, file_id: str, *, max_bytes: int) -> bytes:
+        content = self._file_contents.get(file_id)
+        if content is None:
+            raise RuntimeError("Demo cloud file content is unavailable")
+        if len(content) > max_bytes:
+            raise RuntimeError("Demo cloud file exceeds the safe read limit")
+        return content
 
     def _find_node(self, node_id: str) -> CloudNode:
         node = next((item for item in self._nodes if item.id == node_id), None)

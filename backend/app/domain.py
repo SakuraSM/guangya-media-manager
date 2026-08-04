@@ -34,6 +34,16 @@ class MetadataSource(StrEnum):
     LOCAL = "LOCAL"
 
 
+class MatchOrigin(StrEnum):
+    RULE = "RULE"
+    PATH_ID = "PATH_ID"
+    NFO = "NFO"
+    TMDB = "TMDB"
+    AI = "AI"
+    LOCAL = "LOCAL"
+    MANUAL = "MANUAL"
+
+
 class SourceClassification(StrEnum):
     MEDIA = "MEDIA"
     SUBTITLE = "SUBTITLE"

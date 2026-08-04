@@ -212,6 +212,11 @@ class MediaMatch(Base, TimestampMixin):
     episode_title: Mapped[str] = mapped_column(String(256), default="")
     episode_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
     release_info: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    metadata_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    provider_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    match_origin: Mapped[str] = mapped_column(String(32), default="RULE")
+    metadata_hint: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    decision_reasons: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list)
 
     source_item: Mapped[SourceItem] = relationship(back_populates="media_match")
     media_entity: Mapped[MediaEntity | None] = relationship()

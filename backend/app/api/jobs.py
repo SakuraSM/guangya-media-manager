@@ -394,6 +394,8 @@ async def update_media_group(
             request=UpdateMatchRequest(
                 decision=request.decision,
                 candidate_tmdb_id=request.candidate_tmdb_id,
+                provider=request.provider,
+                provider_id=request.provider_id,
             ),
             session=session,
         )
@@ -786,6 +788,11 @@ def _to_match_view(
         metadata_source=(
             media_match.media_entity.metadata_source if media_match.media_entity else None
         ),
+        metadata_provider=media_match.metadata_provider,
+        provider_id=media_match.provider_id,
+        match_origin=media_match.match_origin,
+        metadata_hint=media_match.metadata_hint,
+        decision_reasons=media_match.decision_reasons,
         candidates=[
             MatchCandidate.model_validate(candidate) for candidate in media_match.candidates
         ],

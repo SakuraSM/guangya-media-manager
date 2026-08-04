@@ -5,7 +5,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from app.domain import JobStatus, MatchDecision, MediaType
+from app.domain import JobStatus, MatchDecision, MatchOrigin, MediaType, MetadataSource
 from app.models import (
     AuditEvent,
     MediaMatch,
@@ -210,8 +210,11 @@ class OrganizerService:
             match_id=match_id,
         )
 
-        if request.candidate_tmdb_id is not None:
-            candidate = find_candidate(media_match.candidates, request.candidate_tmdb_id)
+        resolved_tmdb_id = request.resolved_tmdb_id()
+        if request.provider not in {None, MetadataSource.TMDB}:
+            raise OrganizerError("该 Provider 不支持从候选列表采用")
+        if resolved_tmdb_id is not None:
+            candidate = find_candidate(media_match.candidates, resolved_tmdb_id)
             if candidate is None:
                 raise OrganizerError("Candidate not found")
             entity = await persist_candidate_payload(session, candidate)
@@ -267,7 +270,7 @@ class OrganizerService:
             media_match = matches_by_id[item.match_id]
             candidate = find_candidate(
                 media_match.candidates,
-                item.candidate_tmdb_id,
+                item.resolved_tmdb_id(),
             )
             if candidate is None:
                 raise OrganizerError(f"文件 {media_match.source_item.filename} 的候选不存在")
@@ -320,17 +323,20 @@ class OrganizerService:
         if not matches:
             raise OrganizerError("Media group not found")
 
+        resolved_tmdb_id = request.resolved_tmdb_id()
+        if request.provider not in {None, MetadataSource.TMDB}:
+            raise OrganizerError("该 Provider 不支持从候选列表采用")
         validated_candidates: list[tuple[MediaMatch, dict[str, object] | None]] = []
         for media_match in matches:
             candidate = (
                 find_candidate(
                     media_match.candidates,
-                    request.candidate_tmdb_id,
+                    resolved_tmdb_id,
                 )
-                if request.candidate_tmdb_id is not None
+                if resolved_tmdb_id is not None
                 else None
             )
-            if request.candidate_tmdb_id is not None and candidate is None:
+            if resolved_tmdb_id is not None and candidate is None:
                 raise OrganizerError(f"文件 {media_match.source_item.filename} 的候选不存在")
             validated_candidates.append((media_match, candidate))
 
@@ -426,6 +432,7 @@ class OrganizerService:
         media_match.reason_codes = list(
             dict.fromkeys((*parsed.reason_codes, "SINGLE_ITEM_RETRIED"))
         )
+        _set_retry_metadata_fields(media_match, parsed, top_candidate)
         session.add(
             AuditEvent(
                 job_id=job_id,
@@ -540,6 +547,7 @@ class OrganizerService:
                     (*parsed.reason_codes, "MEDIA_GROUP_RETRIED")
                 )
             )
+            _set_retry_metadata_fields(media_match, parsed, top_candidate)
             media_match.target_path = (
                 target_path_for(
                     parsed,
@@ -633,6 +641,7 @@ class OrganizerService:
             validate_candidate(candidate_to_dict(candidate)),
         )
         media_match.reason_codes = list(dict.fromkeys((*media_match.reason_codes, "MANUAL_MATCH")))
+        _set_manual_metadata_fields(media_match, str(candidate.tmdb_id))
         session.add(
             AuditEvent(
                 job_id=job_id,
@@ -704,6 +713,7 @@ class OrganizerService:
             media_match.source_item.group_key = group_key
             media_match.confidence = 1
             media_match.candidates = [candidate_to_dict(candidate)]
+            _set_manual_metadata_fields(media_match, str(candidate.tmdb_id))
             media_match.season_number = season_number
             media_match.episode_numbers = list(episode_numbers)
             media_match.episode_title = ""
@@ -852,6 +862,7 @@ class OrganizerService:
             media_match.source_item.group_key = group_key
             media_match.confidence = 1
             media_match.candidates = []
+            _set_manual_metadata_fields(media_match, None)
             media_match.season_number = season_number
             media_match.episode_numbers = list(episode_numbers)
             await session.execute(
@@ -1227,3 +1238,52 @@ def _merge_manual_group_context(
             )
         ),
     )
+
+
+def _set_retry_metadata_fields(
+    media_match: MediaMatch,
+    parsed: ParsedMediaName,
+    candidate: MetadataCandidate | None,
+) -> None:
+    origin = (
+        MatchOrigin.AI
+        if "AI_RECOGNIZED" in parsed.reason_codes
+        else MatchOrigin.TMDB
+        if candidate is not None
+        else MatchOrigin.RULE
+    )
+    media_match.metadata_provider = MetadataSource.TMDB.value if candidate else None
+    media_match.provider_id = str(candidate.tmdb_id) if candidate else None
+    media_match.match_origin = origin.value
+    media_match.metadata_hint = {}
+    media_match.decision_reasons = [
+        {
+            "code": "AI_MANUAL_CONFIRMATION_REQUIRED"
+            if origin == MatchOrigin.AI
+            else "RETRY_COMPLETED",
+            "message": "AI 重新识别结果需要人工确认。"
+            if origin == MatchOrigin.AI
+            else "已重新执行作品级元数据识别。",
+            "severity": "WARNING" if origin == MatchOrigin.AI else "INFO",
+            "overridable": True,
+            "origin": origin.value,
+        }
+    ]
+
+
+def _set_manual_metadata_fields(media_match: MediaMatch, provider_id: str | None) -> None:
+    media_match.metadata_provider = (
+        MetadataSource.TMDB.value if provider_id is not None else MetadataSource.LOCAL.value
+    )
+    media_match.provider_id = provider_id
+    media_match.match_origin = MatchOrigin.MANUAL.value
+    media_match.metadata_hint = {}
+    media_match.decision_reasons = [
+        {
+            "code": "MANUAL_MATCH",
+            "message": "该作品身份由管理员手动确认。",
+            "severity": "INFO",
+            "overridable": True,
+            "origin": MatchOrigin.MANUAL.value,
+        }
+    ]

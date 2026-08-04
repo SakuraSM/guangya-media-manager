@@ -22,6 +22,7 @@ import {
 } from '@/types'
 import { formatConfidence } from '@/utils/format'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Empty,
@@ -122,6 +123,15 @@ export function MatchInspector({
             </div>
           </section>
           <RecognitionNotice mediaMatch={mediaMatch} />
+          <div className="flex flex-wrap items-center gap-2" aria-label="元数据识别来源">
+            <Badge variant="outline">来源：{matchOriginLabel(mediaMatch.match_origin)}</Badge>
+            {mediaMatch.metadata_provider ? (
+              <Badge variant="secondary">
+                {mediaMatch.metadata_provider}
+                {mediaMatch.provider_id ? ` · ${mediaMatch.provider_id}` : ''}
+              </Badge>
+            ) : null}
+          </div>
           {mediaMatch.execution_error ? (
             <Alert variant="destructive">
               <CircleAlert aria-hidden="true" />
@@ -131,7 +141,7 @@ export function MatchInspector({
           ) : null}
 
           <Field>
-            <FieldLabel>TMDB 候选匹配（{mediaMatch.candidates.length}）</FieldLabel>
+            <FieldLabel>元数据候选（{mediaMatch.candidates.length}）</FieldLabel>
             {mediaMatch.candidates.length ? (
               <RadioGroup
                 value={selectedCandidate ? String(selectedCandidate.tmdb_id) : ''}
@@ -239,6 +249,18 @@ export function MatchInspector({
       </div>
     </aside>
   )
+}
+
+function matchOriginLabel(origin: MediaMatch['match_origin']): string {
+  return {
+    PATH_ID: '路径 ID',
+    NFO: '本地 NFO',
+    TMDB: 'TMDB 搜索',
+    AI: 'AI 辅助',
+    LOCAL: '本地信息',
+    MANUAL: '手动确认',
+    RULE: '文件名规则',
+  }[origin ?? 'RULE']
 }
 
 function CandidateOption({

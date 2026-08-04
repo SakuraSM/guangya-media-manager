@@ -18,6 +18,7 @@ import type {
   MatchDecision,
   MediaMatch,
   MediaMatchPage,
+  MetadataProviderInfo,
   ReviewFilter,
   SourceAction,
   SourceItem,
@@ -167,6 +168,8 @@ export const api = {
   },
   getSourceItems: (jobId: string) =>
     requestJson<SourceItem[]>(`/jobs/${jobId}/items`),
+  getMetadataProviders: () =>
+    requestJson<MetadataProviderInfo[]>('/metadata/providers'),
   updateSourceItem: ({ jobId, itemId, action }: UpdateSourceItemInput) =>
     requestJson<SourceItem>(`/jobs/${jobId}/items/${itemId}`, {
       method: 'PUT',
