@@ -1,14 +1,18 @@
 import asyncio
+import ipaddress
 from collections.abc import Mapping
 from importlib import import_module
 from io import BytesIO
 from typing import Protocol
+
+import httpx
 
 from app.providers.base import CloudNode, LoginChallenge, LoginTokens, ProviderTask
 
 DEFAULT_CLIENT_ID = "aMe-8VSlkrbQXpUR"
 DEFAULT_PAGE_SIZE = 1000
 MAX_LIST_PAGES = 1000
+DOWNLOAD_TIMEOUT_SECONDS = 10
 
 
 class GuangyaProviderError(RuntimeError):
@@ -40,6 +44,8 @@ class GuangyaClientProtocol(Protocol):
     def fs_move(self, payload: object) -> object: ...
 
     def fs_rename(self, payload: object) -> object: ...
+
+    def download_url(self, file_id: str) -> object: ...
 
     def upload_file(self, file: BytesIO, *, file_name: str, parent_id: str) -> object: ...
 
@@ -199,6 +205,55 @@ class GuangyaProvider:
         )
         payload = _require_mapping(response.get("data", {}))
         return _to_cloud_node(payload, "")
+
+    async def read_bytes(self, file_id: str, *, max_bytes: int) -> bytes:
+        try:
+            signed_url = await asyncio.to_thread(self._client.download_url, file_id)
+            if not isinstance(signed_url, str):
+                raise GuangyaProviderError("Guangya download URL is unavailable")
+            _validate_download_url(httpx.URL(signed_url))
+
+            async def validate_request(request: httpx.Request) -> None:
+                _validate_download_url(request.url)
+
+            chunks: list[bytes] = []
+            total_bytes = 0
+            async with httpx.AsyncClient(
+                timeout=DOWNLOAD_TIMEOUT_SECONDS,
+                follow_redirects=True,
+                event_hooks={"request": [validate_request]},
+            ) as client, client.stream("GET", signed_url) as response:
+                response.raise_for_status()
+                content_length = response.headers.get("content-length")
+                if content_length and content_length.isdigit() and int(content_length) > max_bytes:
+                    raise GuangyaProviderError("Cloud file exceeds the safe read limit")
+                async for chunk in response.aiter_bytes():
+                    total_bytes += len(chunk)
+                    if total_bytes > max_bytes:
+                        raise GuangyaProviderError("Cloud file exceeds the safe read limit")
+                    chunks.append(chunk)
+            return b"".join(chunks)
+        except GuangyaProviderError:
+            raise
+        except Exception as error:
+            raise GuangyaProviderError("Guangya small file read failed") from error
+
+
+def _validate_download_url(url: httpx.URL) -> None:
+    hostname = (url.host or "").casefold()
+    if (
+        url.scheme != "https"
+        or not hostname
+        or hostname == "localhost"
+        or hostname.endswith(".local")
+    ):
+        raise GuangyaProviderError("Guangya download URL is not allowed")
+    try:
+        address = ipaddress.ip_address(hostname.strip("[]"))
+    except ValueError:
+        return
+    if not address.is_global:
+        raise GuangyaProviderError("Guangya download URL is not allowed")
 
 
 def _require_mapping(value: object) -> Mapping[str, object]:

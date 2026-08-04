@@ -203,6 +203,10 @@ class TmdbService:
     def configure(self, token: str) -> None:
         self._token = token.strip()
 
+    @property
+    def is_enabled(self) -> bool:
+        return bool(self._token) or self._is_demo_mode
+
     async def search(self, parsed: ParsedMediaName) -> list[MetadataCandidate]:
         if not self._token:
             return demo_candidates_for(parsed) if self._is_demo_mode else []
@@ -356,6 +360,43 @@ class TmdbService:
             backdrop_url=_image_url(payload.get("backdrop_path")),
             overview=_string_value(payload.get("overview")),
         )
+
+    async def find_imdb_candidate(
+        self,
+        *,
+        imdb_id: str,
+        media_type: MediaType,
+    ) -> MetadataCandidate | None:
+        if not self._token:
+            return None
+        payload = await self._get_json(
+            f"find/{imdb_id}",
+            {"external_source": "imdb_id", "language": "zh-CN"},
+        )
+        result_key = "tv_results" if media_type == MediaType.TV else "movie_results"
+        results = payload.get(result_key, [])
+        if not isinstance(results, list):
+            raise MetadataServiceError(
+                "TMDB returned invalid external ID results",
+                reason_code="TMDB_FIND_INVALID_RESPONSE",
+            )
+        parsed = ParsedMediaName(
+            media_type=media_type,
+            title="",
+            year=None,
+            season_number=None,
+            episode_numbers=(),
+            edition="",
+            confidence=1,
+            reason_codes=("IMDB_ID",),
+            is_ignored=False,
+        )
+        for item in results:
+            if isinstance(item, dict):
+                candidate = _to_metadata_candidate(item, parsed)
+                if candidate is not None:
+                    return replace(candidate, score=1)
+        return None
 
     async def _get_json(
         self,

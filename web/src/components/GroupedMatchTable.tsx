@@ -194,6 +194,9 @@ function MatchRow({
           <strong className="block truncate text-xs font-medium">
             {selectedCandidate?.title ?? '未找到候选'}
           </strong>
+          <Badge variant="outline" className="mt-1 max-w-full text-[0.62rem]">
+            {originLabel(mediaMatch.match_origin)}
+          </Badge>
           <small
             className={cn(
               'block truncate text-[0.68rem] text-muted-foreground',
@@ -217,6 +220,18 @@ function MatchRow({
       </Button>
     </div>
   )
+}
+
+function originLabel(origin: MediaMatch['match_origin']): string {
+  return {
+    PATH_ID: '路径 ID',
+    NFO: 'NFO',
+    TMDB: 'TMDB',
+    AI: 'AI',
+    LOCAL: '本地',
+    MANUAL: '手动',
+    RULE: '规则',
+  }[origin ?? 'RULE']
 }
 
 function confidenceClass(confidence: number): string {

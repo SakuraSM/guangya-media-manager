@@ -99,6 +99,9 @@ async def persist_local_metadata_entity(
     title: str,
     year: int | None,
     media_type: MediaType,
+    original_title: str = "",
+    overview: str = "",
+    metadata_snapshot: dict[str, object] | None = None,
 ) -> MediaEntity:
     normalized_title = " ".join(title.split()).casefold()
     local_key = sha256(
@@ -108,6 +111,15 @@ async def persist_local_metadata_entity(
         select(MediaEntity).where(MediaEntity.local_key == local_key)
     )
     if existing:
+        if original_title and not existing.original_title:
+            existing.original_title = original_title
+        if overview and not existing.overview:
+            existing.overview = overview
+        if metadata_snapshot:
+            existing.metadata_snapshot = {
+                **existing.metadata_snapshot,
+                **metadata_snapshot,
+            }
         return existing
     entity = MediaEntity(
         tmdb_id=None,
@@ -116,10 +128,14 @@ async def persist_local_metadata_entity(
         local_key=local_key,
         media_type=media_type,
         title=" ".join(title.split()),
-        original_title="",
+        original_title=original_title,
         year=year,
-        overview="",
-        metadata_snapshot={"source": MetadataSource.LOCAL.value, "lockdata": True},
+        overview=overview,
+        metadata_snapshot={
+            "source": MetadataSource.LOCAL.value,
+            "lockdata": True,
+            **(metadata_snapshot or {}),
+        },
     )
     session.add(entity)
     await session.flush()
@@ -183,6 +199,8 @@ def target_path_for_entity(
 def candidate_to_dict(candidate: MetadataCandidate) -> dict[str, object]:
     return {
         "tmdb_id": candidate.tmdb_id,
+        "provider": MetadataSource.TMDB.value,
+        "provider_id": str(candidate.tmdb_id),
         "title": candidate.title,
         "original_title": candidate.original_title,
         "year": candidate.year,

@@ -129,6 +129,8 @@ export interface JobPage {
 
 export interface MatchCandidate {
   tmdb_id: number
+  provider?: MetadataSource
+  provider_id?: string | null
   title: string
   original_title: string
   year: number | null
@@ -155,6 +157,11 @@ export interface MediaMatch {
   decision: MatchDecision
   selected_tmdb_id: number | null
   metadata_source?: MetadataSource | null
+  metadata_provider?: MetadataSource | null
+  provider_id?: string | null
+  match_origin?: 'RULE' | 'PATH_ID' | 'NFO' | 'TMDB' | 'AI' | 'LOCAL' | 'MANUAL'
+  metadata_hint?: Record<string, unknown>
+  decision_reasons?: MatchDecisionReason[]
   candidates: MatchCandidate[]
   target_path: string
   reason_codes: string[]
@@ -168,6 +175,26 @@ export interface MediaMatch {
   }
   execution_status?: OperationStatus | null
   execution_error?: string | null
+}
+
+export interface MatchDecisionReason {
+  code: string
+  message: string
+  severity: 'INFO' | 'WARNING' | 'BLOCKING'
+  overridable: boolean
+  origin: string
+}
+
+export interface MetadataProviderInfo {
+  provider: MetadataSource
+  display_name: string
+  enabled: boolean
+  capabilities: {
+    search: boolean
+    external_identity: boolean
+    episode_details: boolean
+    languages: string[]
+  }
 }
 
 export interface MediaMatchPage {

@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from pathlib import PurePosixPath
 
 from sqlalchemy import delete, select
@@ -7,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.domain import (
     JobStatus,
     MatchDecision,
+    MatchOrigin,
     MediaType,
     SourceClassification,
 )
@@ -20,6 +22,12 @@ from app.models import (
     SourceItem,
 )
 from app.providers.base import CloudNode, CloudProvider
+from app.services.match_decision import (
+    DecisionReason,
+    DecisionSeverity,
+    MatchDecisionResult,
+    decide_identity_match,
+)
 from app.services.media_parser import (
     ParsedMediaName,
     parse_media_filename,
@@ -27,12 +35,22 @@ from app.services.media_parser import (
 from app.services.metadata import (
     AiRecognitionService,
     MetadataCandidate,
+    MetadataResolution,
     MetadataResolutionRequest,
     MetadataResolver,
     MetadataServiceError,
     SeasonMetadata,
     TmdbService,
 )
+from app.services.metadata_identity import (
+    MAX_NFO_BYTES,
+    MetadataHint,
+    MetadataHintError,
+    choose_nfo_path,
+    extract_path_hint,
+    parse_nfo,
+)
+from app.services.metadata_providers import LocalMetadataProvider, TmdbMetadataProvider
 from app.services.organizer_scan_progress import (
     RULE_PARSE_COMPLETE_PROGRESS,
     IncrementalMatchStore,
@@ -44,9 +62,11 @@ from app.services.organizer_support import (
     decide_match,
     fail_job,
     load_job,
+    persist_local_metadata_entity,
     persist_metadata_candidate,
     read_config_float,
     target_path_for,
+    target_path_for_entity,
     update_job_state,
 )
 from app.services.source_classifier import (
@@ -148,7 +168,19 @@ class ScanWorkflow:
                     classified_nodes,
                 )
                 await self._begin_identification(session, job, len(media_nodes))
-                await self._identify_nodes(session, job, media_nodes, subtitle_nodes)
+                nfo_nodes = [
+                    node
+                    for node, result in classified_nodes
+                    if result.classification == SourceClassification.EXISTING_ASSET
+                    and PurePosixPath(node.name).suffix.casefold() == ".nfo"
+                ]
+                await self._identify_nodes(
+                    session,
+                    job,
+                    media_nodes,
+                    subtitle_nodes,
+                    nfo_nodes,
+                )
             except (OrganizerError, MetadataServiceError, RuntimeError) as error:
                 await fail_job(session, job, "扫描或识别失败", error)
 
@@ -186,6 +218,7 @@ class ScanWorkflow:
         job: OrganizeJob,
         media_nodes: list[CloudNode],
         subtitle_nodes: list[CloudNode],
+        nfo_nodes: list[CloudNode],
     ) -> None:
         auto_threshold = read_config_float(job.config, "auto_approve_threshold", 0.9)
         review_threshold = read_config_float(job.config, "review_threshold", 0.65)
@@ -193,6 +226,8 @@ class ScanWorkflow:
         recognition_cache: dict[str, ParsedMediaName] = {}
         candidate_cache: dict[str, list[MetadataCandidate]] = {}
         season_cache: dict[tuple[int, int], SeasonMetadata | None] = {}
+        hint_cache: dict[str, MetadataHint] = {}
+        hint_decision_cache: dict[str, MatchDecisionResult] = {}
         pending_records = await IncrementalMatchStore(
             session,
             job,
@@ -208,6 +243,9 @@ class ScanWorkflow:
             pending_records,
             recognition_cache,
             candidate_cache,
+            hint_cache,
+            hint_decision_cache,
+            nfo_nodes,
         )
         if await _is_cancel_requested(session, job.id):
             await _cancel_scan(session, job)
@@ -230,6 +268,8 @@ class ScanWorkflow:
                 candidate_cache=candidate_cache,
                 season_cache=season_cache,
                 group_seasons=group_seasons,
+                hint_cache=hint_cache,
+                hint_decision_cache=hint_decision_cache,
             )
             decisions.append(decision)
             if _should_commit_metadata_batch(
@@ -252,38 +292,183 @@ class ScanWorkflow:
         pending_records: list[PendingMediaRecord],
         recognition_cache: dict[str, ParsedMediaName],
         candidate_cache: dict[str, list[MetadataCandidate]],
+        hint_cache: dict[str, MetadataHint],
+        hint_decision_cache: dict[str, MatchDecisionResult],
+        nfo_nodes: list[CloudNode],
     ) -> None:
         records_by_group: dict[str, list[PendingMediaRecord]] = {}
         for pending_record in pending_records:
             records_by_group.setdefault(pending_record.group_key, []).append(pending_record)
 
         group_keys = tuple(records_by_group)
+        nfo_by_path = {node.path: node for node in nfo_nodes}
         resolutions = await asyncio.gather(
             *(
-                self._metadata_resolver.resolve(
-                    MetadataResolutionRequest(
-                        filename=records_by_group[group_key][0].cloud_node.name,
-                        parent_path=_relative_path(
-                            str(
-                                PurePosixPath(
-                                    records_by_group[group_key][0].cloud_node.path
-                                ).parent
-                            ),
-                            job.source_directory_path,
-                        ),
-                        parsed=records_by_group[group_key][0].parsed,
-                        group_files=tuple(
-                            record.source_item.relative_path
-                            for record in records_by_group[group_key]
-                        ),
-                    )
+                self._resolve_group_metadata(
+                    job=job,
+                    records=records_by_group[group_key],
+                    nfo_by_path=nfo_by_path,
                 )
                 for group_key in group_keys
             )
         )
-        for group_key, resolution in zip(group_keys, resolutions, strict=True):
+        for group_key, (resolution, hint, hint_decision) in zip(
+            group_keys,
+            resolutions,
+            strict=True,
+        ):
             recognition_cache[group_key] = resolution.parsed
             candidate_cache[group_key] = list(resolution.candidates)
+            if hint is not None:
+                hint_cache[group_key] = hint
+            if hint_decision is not None:
+                hint_decision_cache[group_key] = hint_decision
+
+    async def _resolve_group_metadata(
+        self,
+        *,
+        job: OrganizeJob,
+        records: list[PendingMediaRecord],
+        nfo_by_path: dict[str, CloudNode],
+    ) -> tuple[MetadataResolution, MetadataHint | None, MatchDecisionResult | None]:
+        representative = records[0]
+        path_hint = extract_path_hint(
+            representative.cloud_node.path,
+            filename=representative.cloud_node.name,
+        )
+        nfo_hint: MetadataHint | None = None
+        nfo_path = choose_nfo_path(representative.cloud_node.path, set(nfo_by_path))
+        if nfo_path is not None:
+            try:
+                content = await self._provider.read_bytes(
+                    nfo_by_path[nfo_path].id,
+                    max_bytes=MAX_NFO_BYTES,
+                )
+                nfo_hint = parse_nfo(content, source_path=nfo_path)
+                parent_show_path = str(
+                    PurePosixPath(representative.cloud_node.path).parent.parent
+                    / "tvshow.nfo"
+                )
+                if (
+                    nfo_hint.episode_number is not None
+                    and parent_show_path in nfo_by_path
+                    and parent_show_path != nfo_path
+                ):
+                    show_content = await self._provider.read_bytes(
+                        nfo_by_path[parent_show_path].id,
+                        max_bytes=MAX_NFO_BYTES,
+                    )
+                    show_hint = parse_nfo(show_content, source_path=parent_show_path)
+                    nfo_hint = replace(
+                        show_hint,
+                        season_number=nfo_hint.season_number,
+                        episode_number=nfo_hint.episode_number,
+                    )
+            except (MetadataHintError, RuntimeError) as error:
+                reason_code = getattr(error, "reason_code", "NFO_READ_FAILED")
+                nfo_hint = MetadataHint(
+                    origin=MatchOrigin.NFO,
+                    source_path=nfo_path,
+                    error_code=reason_code,
+                )
+        has_conflict = bool(
+            path_hint
+            and path_hint.identity
+            and nfo_hint
+            and nfo_hint.identity
+            and path_hint.identity != nfo_hint.identity
+        )
+        hint = path_hint or nfo_hint
+        if hint is not None and (hint.identity is not None or hint.title or has_conflict):
+            candidate = None
+            if hint.identity is not None and not has_conflict:
+                try:
+                    candidate = await TmdbMetadataProvider(
+                        self._tmdb_service
+                    ).resolve_identity(hint.identity, representative.parsed.media_type)
+                except (MetadataServiceError, ValueError):
+                    candidate = None
+            decision = decide_identity_match(
+                origin=hint.origin,
+                identity_resolved=candidate is not None,
+                expected_type=representative.parsed.media_type,
+                actual_type=(
+                    nfo_hint.media_type
+                    if nfo_hint is not None
+                    and nfo_hint.identity is not None
+                    and nfo_hint.media_type != MediaType.UNKNOWN
+                    else candidate.media_type
+                    if candidate
+                    else None
+                ),
+                has_local_title=bool(nfo_hint and nfo_hint.title and not nfo_hint.identity),
+                has_conflict=has_conflict,
+                auto_approve_enabled=bool(job.config.get("auto_approve_enabled", True)),
+            )
+            warnings: list[DecisionReason] = []
+            if nfo_hint is not None and nfo_hint.error_code:
+                warnings.append(
+                    DecisionReason(
+                        nfo_hint.error_code,
+                        "关联 NFO 读取或解析失败，已保留其他识别结果。",
+                        DecisionSeverity.WARNING,
+                        True,
+                        MatchOrigin.NFO,
+                    )
+                )
+            if candidate is not None and nfo_hint is not None:
+                if (
+                    nfo_hint.title
+                    and nfo_hint.title.casefold() not in {
+                        candidate.title.casefold(),
+                        candidate.original_title.casefold(),
+                    }
+                ):
+                    warnings.append(
+                        DecisionReason(
+                            "NFO_TITLE_DIFFERS",
+                            "NFO 标题与外部 ID 对应标题不同；明确 ID 仍作为身份依据。",
+                            DecisionSeverity.WARNING,
+                            True,
+                            MatchOrigin.NFO,
+                        )
+                    )
+                if nfo_hint.year and candidate.year and nfo_hint.year != candidate.year:
+                    warnings.append(
+                        DecisionReason(
+                            "NFO_YEAR_DIFFERS",
+                            "NFO 年份与外部 ID 对应年份不同；明确 ID 仍作为身份依据。",
+                            DecisionSeverity.WARNING,
+                            True,
+                            MatchOrigin.NFO,
+                        )
+                    )
+            if warnings:
+                decision = replace(decision, reasons=(*decision.reasons, *warnings))
+            parsed = representative.parsed
+            if candidate is not None:
+                parsed = _merge_candidate_identity(parsed, candidate, hint.origin)
+            return (
+                MetadataResolution(
+                    parsed=parsed,
+                    candidates=(candidate,) if candidate else (),
+                    requires_manual_confirmation=decision.decision != MatchDecision.AUTO_APPROVED,
+                ),
+                hint,
+                decision,
+            )
+        resolution = await self._metadata_resolver.resolve(
+            MetadataResolutionRequest(
+                filename=representative.cloud_node.name,
+                parent_path=_relative_path(
+                    str(PurePosixPath(representative.cloud_node.path).parent),
+                    job.source_directory_path,
+                ),
+                parsed=representative.parsed,
+                group_files=tuple(record.source_item.relative_path for record in records),
+            )
+        )
+        return resolution, nfo_hint, None
 
     async def _associate_subtitles(
         self,
@@ -358,6 +543,8 @@ class ScanWorkflow:
         candidate_cache: dict[str, list[MetadataCandidate]],
         season_cache: dict[tuple[int, int], SeasonMetadata | None],
         group_seasons: dict[str, frozenset[int]],
+        hint_cache: dict[str, MetadataHint],
+        hint_decision_cache: dict[str, MatchDecisionResult],
     ) -> MatchDecision:
         cloud_node = pending_record.cloud_node
         source_item = pending_record.source_item
@@ -417,6 +604,26 @@ class ScanWorkflow:
         )
         top_candidate = candidates[0] if candidates else None
         entity = await persist_metadata_candidate(session, top_candidate) if top_candidate else None
+        hint = hint_cache.get(group_key)
+        hint_decision = hint_decision_cache.get(group_key)
+        if hint_decision is not None:
+            decision = hint_decision.decision
+            confidence = 1 if top_candidate is not None else 0
+        if entity is None and hint is not None and hint.title and hint.identity is None:
+            local_metadata = LocalMetadataProvider().resolve_hint(hint, parsed.media_type)
+            if local_metadata is not None:
+                entity = await persist_local_metadata_entity(
+                    session,
+                    title=local_metadata.title,
+                    year=local_metadata.year,
+                    media_type=local_metadata.media_type,
+                    original_title=local_metadata.original_title,
+                    overview=local_metadata.overview,
+                    metadata_snapshot={
+                        "season": local_metadata.season_number,
+                        "episode": local_metadata.episode_number,
+                    },
+                )
         episode_title = ""
         episode_records: list[MediaEpisode] = []
         if (
@@ -447,6 +654,8 @@ class ScanWorkflow:
                 episode_title=episode_title,
             )
             if top_candidate
+            else target_path_for_entity(parsed, entity, source_item.extension)
+            if entity is not None
             else ""
         )
         media_match.media_entity_id = entity.id if entity else None
@@ -469,6 +678,37 @@ class ScanWorkflow:
             "release_group": parsed.release_group,
             "part_number": parsed.part_number,
         }
+        media_match.metadata_provider = (
+            "TMDB" if top_candidate is not None else "LOCAL" if entity is not None else None
+        )
+        media_match.provider_id = str(top_candidate.tmdb_id) if top_candidate else None
+        media_match.match_origin = (
+            hint.origin.value
+            if hint is not None
+            else MatchOrigin.AI.value
+            if "AI_RECOGNIZED" in parsed.reason_codes
+            else MatchOrigin.TMDB.value
+            if candidates
+            else MatchOrigin.RULE.value
+        )
+        media_match.metadata_hint = hint.as_dict() if hint is not None else {}
+        media_match.decision_reasons = (
+            [reason.as_dict() for reason in hint_decision.reasons]
+            if hint_decision is not None
+            else _standard_decision_reasons(parsed, decision, confidence, hint)
+        )
+        media_match.reason_codes = list(
+            dict.fromkeys(
+                (
+                    *media_match.reason_codes,
+                    *(
+                        str(reason.get("code"))
+                        for reason in media_match.decision_reasons
+                        if reason.get("code")
+                    ),
+                )
+            )
+        )
         await session.flush()
         session.add_all(
             [
@@ -601,6 +841,66 @@ def _apply_auto_approval_policy(
     if decision == MatchDecision.AUTO_APPROVED and not auto_approve_enabled:
         return MatchDecision.REVIEW
     return decision
+
+
+def _standard_decision_reasons(
+    parsed: ParsedMediaName,
+    decision: MatchDecision,
+    confidence: float,
+    hint: MetadataHint | None,
+) -> list[dict[str, object]]:
+    reasons: list[dict[str, object]] = []
+    if hint is not None and hint.error_code:
+        reasons.append(
+            {
+                "code": hint.error_code,
+                "message": "关联 NFO 读取或解析失败，已继续使用其他识别方式。",
+                "severity": "WARNING",
+                "overridable": True,
+                "origin": MatchOrigin.NFO.value,
+            }
+        )
+    if "AI_MANUAL_CONFIRMATION_REQUIRED" in parsed.reason_codes:
+        reasons.append(
+            {
+                "code": "AI_MANUAL_CONFIRMATION_REQUIRED",
+                "message": "AI 仅辅助判断作品名称，结果必须人工确认。",
+                "severity": "WARNING",
+                "overridable": True,
+                "origin": MatchOrigin.AI.value,
+            }
+        )
+    elif decision == MatchDecision.AUTO_APPROVED:
+        reasons.append(
+            {
+                "code": "TMDB_SCORE_AUTO_APPROVED",
+                "message": f"TMDB 候选评分 {confidence:.0%}，达到自动通过阈值。",
+                "severity": "INFO",
+                "overridable": False,
+                "origin": MatchOrigin.TMDB.value,
+            }
+        )
+    elif decision == MatchDecision.REVIEW:
+        reasons.append(
+            {
+                "code": "CANDIDATE_REVIEW_REQUIRED",
+                "message": f"候选评分 {confidence:.0%}，需要人工确认。",
+                "severity": "WARNING",
+                "overridable": True,
+                "origin": MatchOrigin.TMDB.value,
+            }
+        )
+    elif decision == MatchDecision.UNRESOLVED:
+        reasons.append(
+            {
+                "code": "NO_VALID_CANDIDATE",
+                "message": "未找到可安全采用的元数据候选。",
+                "severity": "BLOCKING",
+                "overridable": True,
+                "origin": MatchOrigin.TMDB.value,
+            }
+        )
+    return reasons
 
 
 def _should_commit_metadata_batch(
@@ -747,6 +1047,31 @@ def _merge_group_context(
     )
 
 
+def _merge_candidate_identity(
+    parsed: ParsedMediaName,
+    candidate: MetadataCandidate,
+    origin: MatchOrigin,
+) -> ParsedMediaName:
+    return ParsedMediaName(
+        media_type=candidate.media_type,
+        title=candidate.title,
+        year=candidate.year or parsed.year,
+        season_number=parsed.season_number,
+        episode_numbers=parsed.episode_numbers,
+        edition=parsed.edition,
+        confidence=1,
+        reason_codes=tuple(
+            dict.fromkeys(
+                (*parsed.reason_codes, f"{origin.value}_IDENTITY", "EXPLICIT_ID_RESOLVED")
+            )
+        ),
+        is_ignored=parsed.is_ignored,
+        episode_date=parsed.episode_date,
+        quality_tags=parsed.quality_tags,
+        release_group=parsed.release_group,
+        part_number=parsed.part_number,
+        context_group=parsed.context_group,
+    )
 async def _persist_season_metadata(
     session: AsyncSession,
     media_entity_id: str,
