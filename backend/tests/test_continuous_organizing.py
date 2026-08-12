@@ -15,7 +15,7 @@ from app.models import Base, OrganizeJob, OrganizeRule
 from app.providers.base import CloudNode
 from app.services.incremental_scan import IncrementalDirectoryScanner
 from app.services.media_classification import apply_output_layout, classify_media
-from app.services.organize_rules import next_run_at
+from app.services.organize_rules import OrganizeRuleError, next_run_at
 from app.services.quality import build_quality_decision, version_group_key
 
 
@@ -114,6 +114,34 @@ def test_disabled_rule_has_no_next_run() -> None:
         interval_minutes=30,
     )
     assert next_run_at(rule, datetime.now(UTC)) is None
+
+
+@pytest.mark.parametrize(
+    "expression",
+    (
+        "x x x x x",
+        "60 * * * *",
+        "0 24 * * *",
+        "0 3 0 * *",
+        "0 3 * 13 *",
+        "0 3 * * 7",
+        "*/0 * * * *",
+        "0 3 20-10 * *",
+    ),
+)
+def test_invalid_cron_expression_is_rejected(expression: str) -> None:
+    rule = OrganizeRule(
+        name="invalid-cron",
+        source_directory_id="source",
+        source_directory_path="/source",
+        target_directory_id="target",
+        target_directory_path="/target",
+        schedule_type=RuleScheduleType.CRON,
+        cron_expression=expression,
+        timezone="Asia/Shanghai",
+    )
+    with pytest.raises(OrganizeRuleError):
+        next_run_at(rule, datetime.now(UTC))
 
 
 @pytest.mark.asyncio

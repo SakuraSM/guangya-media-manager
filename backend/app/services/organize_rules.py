@@ -211,6 +211,7 @@ def next_run_at(rule: OrganizeRule, after: datetime) -> datetime | None:
         return after + timedelta(minutes=rule.interval_minutes or 5)
     if not rule.cron_expression:
         return None
+    _validate_cron_expression(rule.cron_expression)
     try:
         timezone = ZoneInfo(rule.timezone)
     except ZoneInfoNotFoundError as error:
@@ -249,6 +250,43 @@ def _cron_matches(expression: str, value: datetime) -> bool:
             _cron_field_matches(weekday, cron_weekday, 0, 6),
         )
     )
+
+
+def _validate_cron_expression(expression: str) -> None:
+    fields = expression.split()
+    if len(fields) != 5:
+        raise OrganizeRuleError("Cron 表达式必须包含五个字段")
+    for field, minimum, maximum in zip(
+        fields,
+        (0, 0, 1, 1, 0),
+        (59, 23, 31, 12, 6),
+        strict=True,
+    ):
+        _validate_cron_field(field, minimum, maximum)
+
+
+def _validate_cron_field(field: str, minimum: int, maximum: int) -> None:
+    if not field:
+        raise OrganizeRuleError("Cron 表达式包含空字段")
+    for part in field.split(","):
+        if part == "*":
+            continue
+        if part.startswith("*/"):
+            step = part[2:]
+            if step.isdigit() and int(step) > 0:
+                continue
+            raise OrganizeRuleError("Cron 步长必须是正整数")
+        if "-" in part:
+            start_text, end_text = part.split("-", 1)
+            if start_text.isdigit() and end_text.isdigit():
+                start = int(start_text)
+                end = int(end_text)
+                if minimum <= start <= end <= maximum:
+                    continue
+            raise OrganizeRuleError("Cron 范围超出允许值")
+        if part.isdigit() and minimum <= int(part) <= maximum:
+            continue
+        raise OrganizeRuleError("Cron 字段包含不支持或超出范围的值")
 
 
 def _cron_field_matches(field: str, value: int, minimum: int, maximum: int) -> bool:
