@@ -5,7 +5,17 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from app.domain import JobStatus, MatchDecision, MatchOrigin, MediaType, MetadataSource
+from app.config import get_settings
+from app.domain import (
+    JobStatus,
+    LibraryCategory,
+    MatchDecision,
+    MatchOrigin,
+    MediaType,
+    MetadataSource,
+    OutputLayout,
+    RegionBucket,
+)
 from app.models import (
     AuditEvent,
     MediaMatch,
@@ -23,6 +33,7 @@ from app.schemas import (
     UpdateMatchRequest,
 )
 from app.schemas import MatchCandidate as MatchCandidateSchema
+from app.services.media_classification import apply_output_layout
 from app.services.media_parser import (
     ParsedMediaName,
     parse_bare_episode_numbers,
@@ -38,6 +49,7 @@ from app.services.metadata import (
     TmdbService,
 )
 from app.services.naming import NamingInput, build_target_relative_path
+from app.services.organize_rules import complete_rule_job, enqueue_raw
 from app.services.organizer_ai_review import AiReviewWorkflow
 from app.services.organizer_execute import ExecutionWorkflow
 from app.services.organizer_scan import ScanWorkflow, _persist_season_metadata
@@ -151,9 +163,36 @@ class OrganizerService:
                     await session.commit()
             if should_auto_execute:
                 await self._execution_workflow.run(job_id)
+            retry_job = (
+                await complete_rule_job(
+                    self._session_factory,
+                    get_settings(),
+                    job_id,
+                )
+                if job.rule_id
+                else None
+            )
+            if retry_job is not None:
+                if get_settings().demo_mode:
+                    await self.run_action("scan", retry_job.id)
+                else:
+                    await enqueue_raw(get_settings(), "scan", retry_job.id)
             return
         if action == "execute":
             await self._execution_workflow.run(job_id)
+            async with self._session_factory() as session:
+                executed_job = await load_job(session, job_id)
+            if executed_job.rule_id:
+                retry_job = await complete_rule_job(
+                    self._session_factory,
+                    get_settings(),
+                    job_id,
+                )
+                if retry_job is not None:
+                    if get_settings().demo_mode:
+                        await self.run_action("scan", retry_job.id)
+                    else:
+                        await enqueue_raw(get_settings(), "scan", retry_job.id)
             return
         if action == "ai_review":
             try:
@@ -235,6 +274,120 @@ class OrganizerService:
         await session.refresh(media_match)
         await self._refresh_job_readiness(session, job_id)
         return media_match
+
+    async def update_group_classification(
+        self,
+        *,
+        job_id: str,
+        group_key: str,
+        category: LibraryCategory,
+        region: RegionBucket,
+        session: AsyncSession,
+    ) -> int:
+        job = await load_job(session, job_id)
+        if job.status not in EDITABLE_JOB_STATUSES:
+            raise OrganizerError("当前任务状态不能修改分类")
+        matches = list(
+            (
+                await session.scalars(
+                    select(MediaMatch)
+                    .join(SourceItem)
+                    .options(
+                        selectinload(MediaMatch.source_item),
+                        selectinload(MediaMatch.media_entity),
+                    )
+                    .where(SourceItem.job_id == job_id, MediaMatch.group_key == group_key)
+                )
+            ).all()
+        )
+        if not matches:
+            raise OrganizerError("Media group not found")
+        for media_match in matches:
+            media_match.library_category = category
+            media_match.region_bucket = region
+            media_match.classification_reasons = [
+                {
+                    "code": "CLASSIFICATION_MANUAL_OVERRIDE",
+                    "message": "分类和地区已由用户确认",
+                    "origin": "MANUAL",
+                }
+            ]
+            if media_match.media_entity is not None:
+                standard_path = _target_path_for_identity(
+                    media_match,
+                    media_match.media_entity.title,
+                    media_match.media_entity.year,
+                )
+                media_match.target_path = apply_output_layout(
+                    standard_path,
+                    category=category,
+                    region=region,
+                    classified=job.config.get("output_layout") == OutputLayout.CLASSIFIED.value,
+                    include_region=bool(job.config.get("include_region_directory", True)),
+                )
+        session.add(
+            AuditEvent(
+                job_id=job_id,
+                event_type="CLASSIFICATION_UPDATED",
+                message=f"已更新整组分类，共 {len(matches)} 条",
+            )
+        )
+        await session.commit()
+        return len(matches)
+
+    async def confirm_version_group(
+        self,
+        *,
+        job_id: str,
+        version_group_key: str,
+        selected_match_ids: list[str],
+        session: AsyncSession,
+    ) -> int:
+        job = await load_job(session, job_id)
+        if job.status not in EDITABLE_JOB_STATUSES:
+            raise OrganizerError("当前任务状态不能确认版本")
+        matches = list(
+            (
+                await session.scalars(
+                    select(MediaMatch)
+                    .join(SourceItem)
+                    .where(
+                        SourceItem.job_id == job_id,
+                        MediaMatch.version_group_key == version_group_key,
+                    )
+                )
+            ).all()
+        )
+        if not matches:
+            raise OrganizerError("Version group not found")
+        selected = set(selected_match_ids)
+        available = {media_match.id for media_match in matches}
+        if not selected <= available:
+            raise OrganizerError("选择项不属于该版本组")
+        for media_match in matches:
+            is_selected = media_match.id in selected
+            media_match.version_recommendation = (
+                "CONFIRMED" if is_selected else "NOT_SELECTED"
+            )
+            media_match.decision = MatchDecision.APPROVED if is_selected else MatchDecision.IGNORED
+            media_match.decision_reasons = [
+                reason
+                for reason in media_match.decision_reasons
+                if reason.get("code") != "VERSION_CONFIRMATION_REQUIRED"
+            ]
+        session.add(
+            AuditEvent(
+                job_id=job_id,
+                event_type="VERSION_GROUP_CONFIRMED",
+                message=(
+                    f"版本选择已确认：保留 {len(selected)} 个，"
+                    f"跳过 {len(matches) - len(selected)} 个"
+                ),
+            )
+        )
+        await session.commit()
+        await self._refresh_job_readiness(session, job_id)
+        return len(matches)
 
     async def approve_matches(
         self,
@@ -1087,10 +1240,19 @@ class OrganizerService:
             )
         ).all()
         job = await load_job(session, job_id)
-        review_items = sum(match.decision == MatchDecision.REVIEW for match in matches)
-        unresolved_items = sum(match.decision == MatchDecision.UNRESOLVED for match in matches)
+        review_items = sum(
+            match.decision == MatchDecision.REVIEW
+            or match.version_recommendation == "PENDING"
+            for match in matches
+        )
+        unresolved_items = sum(
+            match.decision == MatchDecision.UNRESOLVED
+            and match.version_recommendation != "PENDING"
+            for match in matches
+        )
         approved_items = sum(
             match.decision in {MatchDecision.AUTO_APPROVED, MatchDecision.APPROVED}
+            and match.version_recommendation != "PENDING"
             for match in matches
         )
         job.review_items = review_items + unresolved_items

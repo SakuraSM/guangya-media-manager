@@ -2,7 +2,7 @@ import asyncio
 import json
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date
 
 import httpx
@@ -33,6 +33,7 @@ class MetadataCandidate:
     poster_url: str | None
     backdrop_url: str | None
     overview: str
+    metadata: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -359,6 +360,7 @@ class TmdbService:
             poster_url=_image_url(payload.get("poster_path")),
             backdrop_url=_image_url(payload.get("backdrop_path")),
             overview=_string_value(payload.get("overview")),
+            metadata=_classification_metadata(payload),
         )
 
     async def find_imdb_candidate(
@@ -848,7 +850,22 @@ def _to_metadata_candidate(
         poster_url=_image_url(poster_path),
         backdrop_url=_image_url(backdrop_path),
         overview=str(item.get("overview") or ""),
+        metadata=_classification_metadata(item),
     )
+
+
+def _classification_metadata(payload: dict[str, object]) -> dict[str, object]:
+    return {
+        key: payload[key]
+        for key in (
+            "genre_ids",
+            "genres",
+            "origin_country",
+            "production_countries",
+            "original_language",
+        )
+        if key in payload
+    }
 
 
 def _parse_year(value: object) -> int | None:

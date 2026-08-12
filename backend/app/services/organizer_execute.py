@@ -336,6 +336,7 @@ class ExecutionWorkflow:
             .where(
                 SourceItem.job_id == job_id,
                 MediaMatch.decision.in_([MatchDecision.AUTO_APPROVED, MatchDecision.APPROVED]),
+                MediaMatch.version_recommendation != "PENDING",
             )
         )
         return list((await session.scalars(statement)).all())

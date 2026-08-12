@@ -25,6 +25,9 @@ const SCRAPING_CONFIG: CreateJobInput['config'] = {
   sample_max_mb: 300,
   exclude_globs: [],
   include_paths: [],
+  output_layout: 'STANDARD',
+  include_region_directory: true,
+  quality_profile: 'QUALITY',
 }
 
 describe('ScrapingOptions', () => {

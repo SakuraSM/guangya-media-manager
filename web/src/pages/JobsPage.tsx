@@ -120,6 +120,15 @@ export function JobsPage() {
                         <strong className="block max-w-48 truncate font-medium">
                           {job.name}
                         </strong>
+                        <span className="mt-1 block text-[0.65rem] font-medium text-primary">
+                          {job.trigger_type === 'SCHEDULED'
+                            ? '定时规则'
+                            : job.trigger_type === 'FAILED_RETRY'
+                              ? '失败重试'
+                            : job.trigger_type === 'DIRTY_RETRY'
+                              ? '变化补跑'
+                              : '手动任务'}
+                        </span>
                         <small className="mt-1 block text-xs text-muted-foreground">
                           {formatDateTime(job.created_at)}
                         </small>
@@ -134,7 +143,9 @@ export function JobsPage() {
                       <TableCell>
                         <strong className="block tabular-nums">{job.total_items}</strong>
                         <small className="mt-1 block text-xs text-muted-foreground">
-                          {formatBytes(job.copied_bytes)} 已复制
+                          {job.rule_id
+                            ? `${job.changed_items} 个变化 · ${job.skipped_directories} 个目录无变化`
+                            : `${formatBytes(job.copied_bytes)} 已复制`}
                         </small>
                       </TableCell>
                       <TableCell>

@@ -59,6 +59,10 @@ SUBTITLE_DESCRIPTION_PATTERN = re.compile(
 EMPTY_BRACKETS_PATTERN = re.compile(r"(?:\(\s*\)|（\s*）|\[\s*\]|【\s*】)")
 PART_PATTERN = re.compile(r"(?i)(?:^|[ ._-])(?:cd|dvd|part|pt|disc|disk)[ ._-]?(\d+)$")
 RELEASE_GROUP_PATTERN = re.compile(r"-(?P<group>[A-Za-z0-9][A-Za-z0-9._]{1,31})$")
+SEMANTIC_EDITION_PATTERN = re.compile(
+    r"(?i)(director'?s[ ._-]*cut|extended(?:[ ._-]*cut)?|theatrical(?:[ ._-]*cut)?|"
+    r"unrated|criterion|final[ ._-]*cut|导演剪辑版|加长版|剧场版|未分级版)"
+)
 SEPARATOR_PATTERN = re.compile(r"[._]+")
 SPACE_PATTERN = re.compile(r"\s+")
 
@@ -381,6 +385,9 @@ def _clean_title(value: str) -> str:
 
 
 def _extract_edition(normalized: str) -> str:
+    match = SEMANTIC_EDITION_PATTERN.search(normalized)
+    if match is not None:
+        return SPACE_PATTERN.sub(" ", SEPARATOR_PATTERN.sub(" ", match.group(1))).strip()
     edition_markers = [
         marker
         for marker in ("REMUX", "BluRay", "WEB-DL", "WEBRip", "2160p", "1080p", "720p")

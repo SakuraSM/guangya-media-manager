@@ -60,8 +60,8 @@ UNQUOTED_ASSIGNMENT = re.compile(
     rb"(?im)^\s*([A-Z][A-Z0-9_-]*(?:KEY|PASSWORD|SECRET|TOKEN)[A-Z0-9_-]*)"
     rb"[ \t]*[:=][ \t]*([^\s#]{8,})[ \t]*$"
 )
-# This squash commit was already published by GitHub before the repository-local
-# noreply identity was enforced. The exact redacted finding is acknowledged here
+# These commits were already published by GitHub before the repository-local
+# noreply identity was enforced. Each exact redacted finding is acknowledged here
 # to avoid weakening checks for any other revision, role, or email.
 ACKNOWLEDGED_PUBLIC_COMMIT_EMAILS = frozenset(
     {
@@ -73,6 +73,11 @@ ACKNOWLEDGED_PUBLIC_COMMIT_EMAILS = frozenset(
         (
             "1f37521550f9d257034f31b124756b1dcec820b3",
             "committer",
+            "41c0abdc6573",
+        ),
+        (
+            "6b9e826044fac19609a9703419e521e60a311e9c",
+            "author",
             "41c0abdc6573",
         ),
     }

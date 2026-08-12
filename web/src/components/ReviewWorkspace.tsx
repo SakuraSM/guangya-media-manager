@@ -43,6 +43,7 @@ interface ReviewWorkspaceProps {
   isSelectionEnabled: boolean
   reviewFilter: ReviewFilter
   selectedCandidateId: number | null
+  versionMatches: MediaMatch[]
   isFetching: boolean
   isSaving: boolean
   isRetrying: boolean
@@ -59,12 +60,21 @@ interface ReviewWorkspaceProps {
   onManualMatch: (match: ManualMatchInput) => void
   onManualGroupMatch: (match: ManualMatchInput) => void
   onLocalGroupMatch: (metadata: LocalMetadataGroupInput) => void
+  onConfirmVersionGroup: (selectedMatchIds: string[]) => void
+  onUpdateClassification: (
+    category: MediaMatch['library_category'],
+    region: MediaMatch['region_bucket'],
+  ) => void
   onPageChange: (page: number) => void
   onPageSizeChange: (pageSize: number) => void
 }
 
 export function ReviewWorkspace(props: ReviewWorkspaceProps) {
   const [isInspectorOpen, setIsInspectorOpen] = useState(false)
+  const visibleMatches = props.matchGroups.flatMap((group) => group.items)
+  const selectedIndex = props.selectedMatch
+    ? visibleMatches.findIndex((item) => item.id === props.selectedMatch?.id)
+    : -1
   const handleMobileSelect = (mediaMatch: MediaMatch) => {
     props.onSelectMatch(mediaMatch)
     setIsInspectorOpen(true)
@@ -102,6 +112,7 @@ export function ReviewWorkspace(props: ReviewWorkspaceProps) {
       jobId={props.jobId}
       mediaMatch={props.selectedMatch}
       selectedCandidateId={props.selectedCandidateId}
+      versionMatches={props.versionMatches}
       isSaving={props.isSaving}
       isRetrying={props.isRetrying}
       isRetryingGroup={props.isRetryingGroup}
@@ -113,12 +124,26 @@ export function ReviewWorkspace(props: ReviewWorkspaceProps) {
       onManualMatch={props.onManualMatch}
       onManualGroupMatch={props.onManualGroupMatch}
       onLocalGroupMatch={props.onLocalGroupMatch}
+      onConfirmVersionGroup={props.onConfirmVersionGroup}
+      onUpdateClassification={props.onUpdateClassification}
+      position={selectedIndex >= 0 ? selectedIndex + 1 : 0}
+      total={visibleMatches.length}
+      canSelectPrevious={selectedIndex > 0}
+      canSelectNext={selectedIndex >= 0 && selectedIndex < visibleMatches.length - 1}
+      onSelectPrevious={() => {
+        if (selectedIndex > 0) props.onSelectMatch(visibleMatches[selectedIndex - 1]!)
+      }}
+      onSelectNext={() => {
+        if (selectedIndex >= 0 && selectedIndex < visibleMatches.length - 1) {
+          props.onSelectMatch(visibleMatches[selectedIndex + 1]!)
+        }
+      }}
     />
   )
 
   return (
     <section
-      className="flex min-h-[32rem] flex-col overflow-hidden rounded-xl border bg-card lg:min-h-0 lg:flex-1"
+      className="flex min-h-[18rem] flex-1 flex-col overflow-hidden rounded-xl border bg-card lg:min-h-0"
       aria-label="匹配审核工作台"
     >
       <div className="hidden min-h-0 flex-1 xl:block">
@@ -127,11 +152,11 @@ export function ReviewWorkspace(props: ReviewWorkspaceProps) {
             {sourceBrowser}
           </ResizablePanel>
           <ResizableHandle withHandle />
-          <ResizablePanel defaultSize="48%" minSize="35%">
+          <ResizablePanel defaultSize="46%" minSize="34%">
             {matchTable(props.onSelectMatch)}
           </ResizablePanel>
           <ResizableHandle withHandle />
-          <ResizablePanel defaultSize="30%" minSize="24%" maxSize="40%">
+          <ResizablePanel defaultSize="32%" minSize="27%" maxSize="44%">
             {inspector}
           </ResizablePanel>
         </ResizablePanelGroup>

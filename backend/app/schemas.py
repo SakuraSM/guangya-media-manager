@@ -6,10 +6,16 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.domain import (
     AccountStatus,
     JobStatus,
+    JobTriggerType,
+    LibraryCategory,
     MatchDecision,
     MediaType,
     MetadataSource,
     OperationStatus,
+    OutputLayout,
+    QualityProfile,
+    RegionBucket,
+    RuleScheduleType,
     SourceAction,
     SourceClassification,
 )
@@ -77,6 +83,9 @@ class JobConfig(BaseModel):
     sample_max_mb: int = Field(default=300, ge=1, le=10_000)
     exclude_globs: list[str] = Field(default_factory=list, max_length=50)
     include_paths: list[str] = Field(default_factory=list, max_length=500)
+    output_layout: OutputLayout = OutputLayout.STANDARD
+    include_region_directory: bool = True
+    quality_profile: QualityProfile = QualityProfile.QUALITY
 
 
 class CreateJobRequest(BaseModel):
@@ -106,6 +115,11 @@ class JobView(ApiModel):
     auto_approve_enabled: bool
     auto_execute_after_approval: bool
     ai_review_running: bool
+    rule_id: str | None = None
+    trigger_type: JobTriggerType = JobTriggerType.MANUAL
+    scanned_directories: int = 0
+    skipped_directories: int = 0
+    changed_items: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -160,6 +174,13 @@ class MediaMatchView(ApiModel):
     episode_title: str
     episode_date: str | None
     release_info: dict[str, object]
+    library_category: LibraryCategory = LibraryCategory.MOVIE
+    region_bucket: RegionBucket = RegionBucket.OTHER
+    classification_reasons: list[dict[str, object]] = Field(default_factory=list)
+    quality_profile: dict[str, object] = Field(default_factory=dict)
+    version_group_key: str = ""
+    version_score: float = 0
+    version_recommendation: str = "SINGLE"
     execution_status: OperationStatus | None = None
     execution_error: str | None = None
 
@@ -170,6 +191,83 @@ class MediaMatchPage(BaseModel):
     page: int
     page_size: int
     pages: int
+
+
+class UpdateClassificationRequest(BaseModel):
+    library_category: LibraryCategory
+    region_bucket: RegionBucket
+
+
+class UpdateVersionGroupRequest(BaseModel):
+    selected_match_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class VersionGroupUpdateResult(BaseModel):
+    version_group_key: str
+    updated_items: int
+
+
+class OrganizeRuleBase(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    enabled: bool = True
+    source_directory_id: str = Field(min_length=1, max_length=128)
+    source_directory_path: str = Field(min_length=1, max_length=512)
+    target_directory_id: str = Field(min_length=1, max_length=128)
+    target_directory_path: str = Field(min_length=1, max_length=512)
+    config: JobConfig = Field(default_factory=JobConfig)
+    schedule_type: RuleScheduleType = RuleScheduleType.MANUAL
+    interval_minutes: int | None = Field(default=None, ge=5, le=525_600)
+    cron_expression: str | None = Field(default=None, max_length=64)
+    timezone: str = Field(default="Asia/Shanghai", min_length=1, max_length=64)
+    retry_limit: int = Field(default=2, ge=0, le=10)
+    retry_backoff_minutes: int = Field(default=5, ge=1, le=1_440)
+
+    @model_validator(mode="after")
+    def validate_schedule(self) -> "OrganizeRuleBase":
+        if self.schedule_type == RuleScheduleType.INTERVAL and self.interval_minutes is None:
+            raise ValueError("interval_minutes is required for interval schedules")
+        if self.schedule_type == RuleScheduleType.CRON:
+            fields = (self.cron_expression or "").split()
+            if len(fields) != 5:
+                raise ValueError("cron_expression must contain five fields")
+        return self
+
+
+class CreateOrganizeRuleRequest(OrganizeRuleBase):
+    run_immediately: bool = True
+
+
+class UpdateOrganizeRuleRequest(OrganizeRuleBase):
+    pass
+
+
+class OrganizeRuleView(ApiModel):
+    id: str
+    name: str
+    enabled: bool
+    source_directory_id: str
+    source_directory_path: str
+    target_directory_id: str
+    target_directory_path: str
+    config: dict[str, object]
+    schedule_type: RuleScheduleType
+    interval_minutes: int | None
+    cron_expression: str | None
+    timezone: str
+    next_run_at: datetime | None
+    last_run_at: datetime | None
+    last_job_id: str | None
+    last_error: str | None
+    retry_limit: int
+    retry_count: int
+    retry_backoff_minutes: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class OrganizeRuleRunResult(BaseModel):
+    job: JobView
+    coalesced: bool = False
 
 
 class SourceItemView(ApiModel):

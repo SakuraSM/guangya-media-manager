@@ -26,6 +26,13 @@ const UNRESOLVED_MATCH: MediaMatch = {
   episode_title: '',
   episode_date: null,
   release_info: {},
+  library_category: 'TV',
+  region_bucket: 'OTHER',
+  classification_reasons: [],
+  quality_profile: {},
+  version_group_key: 'version-1',
+  version_score: 0,
+  version_recommendation: 'SINGLE',
 }
 
 describe('MatchInspector', () => {
@@ -33,6 +40,7 @@ describe('MatchInspector', () => {
     const handleToggleIgnore = vi.fn()
     const handleRetry = vi.fn()
     const handleManualMatch = vi.fn()
+    const handleSelectNext = vi.fn()
 
     render(
       <QueryClientProvider client={new QueryClient()}>
@@ -50,18 +58,33 @@ describe('MatchInspector', () => {
           onRetryGroup={vi.fn()}
           onManualMatch={handleManualMatch}
           onManualGroupMatch={vi.fn()}
+          versionMatches={[UNRESOLVED_MATCH]}
+          onConfirmVersionGroup={vi.fn()}
+          onUpdateClassification={vi.fn()}
+          position={1}
+          total={2}
+          canSelectPrevious={false}
+          canSelectNext
+          onSelectPrevious={vi.fn()}
+          onSelectNext={handleSelectNext}
         />
       </QueryClientProvider>,
     )
 
-    expect(screen.getByRole('button', { name: '采用当前候选' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '批准并继续' })).toBeDisabled()
     expect(
       screen.getByText('TMDB 请求失败，请检查网络或 API Token。'),
     ).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '源文件与整理设置' }))
     expect(screen.getByText('原始文件')).toBeVisible()
     expect(screen.getAllByText(UNRESOLVED_MATCH.filename).length).toBeGreaterThan(0)
-    expect(screen.getByText(UNRESOLVED_MATCH.source_path)).toBeVisible()
+    expect(
+      screen.getAllByText(UNRESOLVED_MATCH.source_path).some((element) =>
+        element.classList.contains('font-mono'),
+      ),
+    ).toBe(true)
     expect(screen.getByLabelText('TMDB 关键字')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '下一条审核项' }))
     fireEvent.keyDown(screen.getByRole('button', { name: '更多审核操作' }), {
       key: 'Enter',
     })
@@ -74,5 +97,6 @@ describe('MatchInspector', () => {
     expect(handleToggleIgnore).toHaveBeenCalledOnce()
     expect(handleRetry).toHaveBeenCalledOnce()
     expect(handleManualMatch).not.toHaveBeenCalled()
+    expect(handleSelectNext).toHaveBeenCalledOnce()
   })
 })
