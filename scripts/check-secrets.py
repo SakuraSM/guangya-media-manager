@@ -60,7 +60,7 @@ UNQUOTED_ASSIGNMENT = re.compile(
     rb"(?im)^\s*([A-Z][A-Z0-9_-]*(?:KEY|PASSWORD|SECRET|TOKEN)[A-Z0-9_-]*)"
     rb"[ \t]*[:=][ \t]*([^\s#]{8,})[ \t]*$"
 )
-# These commits were already published by GitHub before the repository-local
+# These historical findings were already published before the repository-local
 # noreply identity was enforced. Each exact redacted finding is acknowledged here
 # to avoid weakening checks for any other revision, role, or email.
 ACKNOWLEDGED_PUBLIC_COMMIT_EMAILS = frozenset(
@@ -73,11 +73,6 @@ ACKNOWLEDGED_PUBLIC_COMMIT_EMAILS = frozenset(
         (
             "1f37521550f9d257034f31b124756b1dcec820b3",
             "committer",
-            "41c0abdc6573",
-        ),
-        (
-            "6b9e826044fac19609a9703419e521e60a311e9c",
-            "author",
             "41c0abdc6573",
         ),
     }
@@ -96,6 +91,17 @@ def is_github_noreply(email: str) -> bool:
     normalized = email.casefold()
     return normalized == "noreply@github.com" or normalized.endswith(
         "@users.noreply.github.com"
+    )
+
+
+def is_github_generated_merge(
+    parent_hashes: str, committer_name: str, committer_email: str
+) -> bool:
+    """Return whether GitHub synthesized a merge from already-scanned commits."""
+    return (
+        len(parent_hashes.split()) > 1
+        and committer_name.casefold() == "github"
+        and is_github_noreply(committer_email)
     )
 
 
@@ -142,19 +148,27 @@ def scan_commit_emails() -> list[str]:
     findings: list[str] = []
     rows = git(
         "log",
-        "--format=%H%x09%ae%x09%ce",
+        "--format=%H%x09%P%x09%ae%x09%cn%x09%ce",
         "--branches",
         "--tags",
         "--remotes=origin",
     ).decode().splitlines()
     for row in rows:
-        revision, author_email, committer_email = row.split("\t")
+        revision, parent_hashes, author_email, committer_name, committer_email = row.split(
+            "\t"
+        )
+        github_generated_merge = is_github_generated_merge(
+            parent_hashes, committer_name, committer_email
+        )
         for role, email in (("author", author_email), ("committer", committer_email)):
             email_fingerprint = fingerprint(email.encode())
             acknowledged_finding = (revision, role, email_fingerprint)
             if (
                 email
                 and not is_github_noreply(email)
+                # GitHub's synthetic merge metadata can repeat the account's public
+                # author email. Its parent commits are still scanned individually.
+                and not (role == "author" and github_generated_merge)
                 and acknowledged_finding not in ACKNOWLEDGED_PUBLIC_COMMIT_EMAILS
             ):
                 findings.append(

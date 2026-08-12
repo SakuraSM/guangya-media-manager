@@ -27,7 +27,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Scan tracked files, history, and commit metadata
-        run: python3 scripts/check-secrets.py
+        run: |
+          python3 -m unittest discover -s scripts/tests
+          python3 scripts/check-secrets.py
 
   backend:
     name: Backend checks
