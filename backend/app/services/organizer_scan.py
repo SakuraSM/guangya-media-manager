@@ -11,6 +11,8 @@ from app.domain import (
     MatchOrigin,
     MediaType,
     OutputLayout,
+    ProgressStage,
+    ProgressState,
     QualityProfile,
     SourceClassification,
 )
@@ -73,6 +75,7 @@ from app.services.organizer_support import (
     target_path_for_entity,
     update_job_state,
 )
+from app.services.progress_events import record_job_progress, record_match_progress
 from app.services.quality import build_quality_decision, version_group_key
 from app.services.source_classifier import (
     ClassificationPolicy,
@@ -86,7 +89,7 @@ READY_PROGRESS = 0.45
 MAX_SCAN_DEPTH = 24
 TMDB_SEASON_CONCURRENCY = 4
 METADATA_COMPLETE_PROGRESS = 0.44
-METADATA_COMMIT_BATCH_SIZE = 10
+METADATA_COMMIT_BATCH_SIZE = 5
 
 
 class ScanWorkflow:
@@ -290,6 +293,32 @@ class ScanWorkflow:
                     item_number,
                     len(pending_records),
                 )
+                for completed_record in pending_records[
+                    max(0, item_number - METADATA_COMMIT_BATCH_SIZE):item_number
+                ]:
+                    record_match_progress(
+                        session,
+                        job,
+                        completed_record.media_match,
+                        stage=(
+                            ProgressStage.AUTO_APPROVE
+                            if completed_record.media_match.decision
+                            == MatchDecision.AUTO_APPROVED
+                            else ProgressStage.IDENTIFY
+                        ),
+                        state=(
+                            ProgressState.COMPLETED
+                            if completed_record.media_match.decision
+                            != MatchDecision.UNRESOLVED
+                            else ProgressState.WAITING_REVIEW
+                        ),
+                        message=(
+                            "TMDB 自动审批通过"
+                            if completed_record.media_match.decision
+                            == MatchDecision.AUTO_APPROVED
+                            else "元数据识别完成"
+                        ),
+                    )
                 await session.commit()
         await self._associate_subtitles(session, job, subtitle_nodes)
         await _apply_version_recommendations(session, job)
@@ -863,6 +892,21 @@ class ScanWorkflow:
         job.status = JobStatus.REVIEW_REQUIRED if job.review_items else JobStatus.READY
         job.progress = READY_PROGRESS
         job.current_stage = "等待审核" if job.status == JobStatus.REVIEW_REQUIRED else "可以执行"
+        record_job_progress(
+            session,
+            job,
+            stage=ProgressStage.AUTO_APPROVE,
+            state=(
+                ProgressState.WAITING_REVIEW
+                if job.status == JobStatus.REVIEW_REQUIRED
+                else ProgressState.COMPLETED
+            ),
+            completed=len(decisions),
+            total=len(decisions),
+            succeeded=job.approved_items,
+            failed=job.failed_items,
+            message=job.current_stage,
+        )
         session.add(
             AuditEvent(
                 job_id=job.id,

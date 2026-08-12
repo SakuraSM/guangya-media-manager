@@ -2,6 +2,7 @@ import type { Job } from '../types'
 import { ReviewCommandBar } from './ReviewCommandBar'
 import { CheckCircle2 } from 'lucide-react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import type { EventStreamState } from '@/hooks/useJobEventStream'
 
 interface ReviewPageHeaderProps {
   jobs: Job[]
@@ -17,6 +18,10 @@ interface ReviewPageHeaderProps {
   canStartAiReview: boolean
   isStartingAiReview: boolean
   actionMessage: string
+  connectionState: EventStreamState
+  isFollowingProgress: boolean
+  onResumeFollowing: () => void
+  isProcessingOtherPage: boolean
   onApproveGroup: () => void
   onApproveSelection: () => void
   onExecute: () => void
@@ -38,6 +43,10 @@ export function ReviewPageHeader({
   canStartAiReview,
   isStartingAiReview,
   actionMessage,
+  connectionState,
+  isFollowingProgress,
+  onResumeFollowing,
+  isProcessingOtherPage,
   onApproveGroup,
   onApproveSelection,
   onExecute,
@@ -69,6 +78,10 @@ export function ReviewPageHeader({
         onExecute={onExecute}
         onCancel={onCancel}
         onStartAiReview={onStartAiReview}
+        connectionState={connectionState}
+        isFollowingProgress={isFollowingProgress}
+        onResumeFollowing={onResumeFollowing}
+        isProcessingOtherPage={isProcessingOtherPage}
       />
       {actionMessage ? (
         <Alert className="border-success/20 bg-success/5 text-success" role="status">

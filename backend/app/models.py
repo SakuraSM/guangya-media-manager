@@ -74,6 +74,8 @@ class OrganizeJob(Base, TimestampMixin):
     target_directory_path: Mapped[str] = mapped_column(String(512))
     status: Mapped[JobStatus] = mapped_column(String(32), default=JobStatus.DRAFT)
     progress: Mapped[float] = mapped_column(Float, default=0)
+    revision: Mapped[int] = mapped_column(default=0)
+    progress_detail: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     current_stage: Mapped[str] = mapped_column(String(64), default="等待开始")
     config: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     total_items: Mapped[int] = mapped_column(default=0)
@@ -303,6 +305,22 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     job: Mapped[OrganizeJob | None] = relationship(back_populates="audit_events")
+
+
+class JobProgressEvent(Base):
+    __tablename__ = "job_progress_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("organize_jobs.id", ondelete="CASCADE"), index=True
+    )
+    event_type: Mapped[str] = mapped_column(String(48))
+    scope: Mapped[str] = mapped_column(String(24), default="JOB")
+    match_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    group_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    file_operation_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class AppSetting(Base, TimestampMixin):

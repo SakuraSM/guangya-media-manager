@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.domain import MediaType, MetadataSource
+from app.domain import MediaType, MetadataSource, ProgressStage, ProgressState
 from app.models import (
     AuditEvent,
     MediaEpisode,
@@ -36,6 +36,7 @@ from app.services.organizer_scrape_metadata import (
     image_url_for_quality,
     refresh_entity_metadata,
 )
+from app.services.progress_events import record_job_progress, record_match_progress
 
 
 class AssetScraper:
@@ -57,7 +58,8 @@ class AssetScraper:
         warning_count = 0
         refreshed_entity_ids: set[str] = set()
         download_cache = AssetDownloadCache()
-        for media_match in matches:
+        total_matches = len(matches)
+        for match_number, media_match in enumerate(matches, start=1):
             entity = media_match.media_entity
             if entity is None:
                 continue
@@ -89,6 +91,28 @@ class AssetScraper:
                 episodes=episodes,
                 download_cache=download_cache,
             )
+            record_match_progress(
+                session,
+                job,
+                media_match,
+                stage=ProgressStage.SCRAPE,
+                state=ProgressState.COMPLETED,
+                message="NFO 与图片处理完成",
+            )
+            record_job_progress(
+                session,
+                job,
+                stage=ProgressStage.SCRAPE,
+                state=ProgressState.RUNNING,
+                completed=match_number,
+                total=total_matches,
+                succeeded=match_number,
+                failed=warning_count,
+                current_group=media_match.group_key,
+                current_match_id=media_match.id,
+                message=f"刮削资源 {match_number}/{total_matches}",
+            )
+            await session.commit()
         await session.commit()
         return warning_count
 

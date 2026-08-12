@@ -153,6 +153,15 @@ def test_job_view_exposes_automation_settings() -> None:
 
     assert isinstance(job["auto_approve_enabled"], bool)
     assert isinstance(job["auto_execute_after_approval"], bool)
+    assert isinstance(job["revision"], int)
+    assert isinstance(job["progress_detail"], dict)
+
+
+def test_realtime_event_stream_requires_login() -> None:
+    with TestClient(app) as client:
+        response = client.get("/api/events/jobs")
+
+    assert response.status_code == 401
 
 
 def test_creates_lists_and_deletes_continuous_organize_rule() -> None:

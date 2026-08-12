@@ -132,3 +132,23 @@ class OperationType(StrEnum):
     MOVE = "MOVE"
     RENAME = "RENAME"
     UPLOAD = "UPLOAD"
+
+
+class ProgressStage(StrEnum):
+    SCAN = "SCAN"
+    IDENTIFY = "IDENTIFY"
+    AUTO_APPROVE = "AUTO_APPROVE"
+    AI_REVIEW = "AI_REVIEW"
+    AUTO_EXECUTE = "AUTO_EXECUTE"
+    COPY = "COPY"
+    SCRAPE = "SCRAPE"
+    FINALIZE = "FINALIZE"
+
+
+class ProgressState(StrEnum):
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    WAITING_REVIEW = "WAITING_REVIEW"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELED = "CANCELED"

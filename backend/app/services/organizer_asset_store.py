@@ -13,6 +13,7 @@ from app.models import (
 )
 from app.providers.base import CloudNode, CloudProvider
 from app.services.organizer_support import make_idempotency_key
+from app.services.progress_events import record_file_operation_progress
 
 ASSET_DOWNLOAD_TIMEOUT_SECONDS = 20
 
@@ -78,6 +79,12 @@ class CloudAssetStore:
         existing.target_path = target_path
         existing.error_message = None
         session.add(existing)
+        record_file_operation_progress(
+            session,
+            asset_input.job,
+            existing,
+            details={"asset_type": asset_input.asset_type},
+        )
 
         media_asset = await session.scalar(
             select(MediaAsset).where(

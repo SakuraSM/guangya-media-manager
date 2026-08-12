@@ -28,12 +28,14 @@ import {
 import { PERCENT_SCALE } from '@/constants'
 import { formatBytes, formatDateTime } from '@/utils/format'
 import { cn } from '@/lib/utils'
+import { useJobEventStream } from '@/hooks/useJobEvents'
 
 export function DashboardPage() {
+  const eventStream = useJobEventStream()
   const dashboardQuery = useQuery({
     queryKey: ['dashboard'],
     queryFn: api.getDashboard,
-    refetchInterval: 5_000,
+    refetchInterval: eventStream.connectionState === 'CONNECTED' ? false : 5_000,
   })
 
   if (dashboardQuery.isPending) {

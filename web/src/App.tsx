@@ -9,6 +9,7 @@ import { LoginPage } from './pages/LoginPage'
 import { ReviewPage } from './pages/ReviewPage'
 import { RulesPage } from './pages/RulesPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { JobEventStreamProvider } from './hooks/useJobEventStream'
 
 export function App() {
   const sessionQuery = useQuery({
@@ -25,7 +26,15 @@ export function App() {
     return <LoginPage />
   }
 
-  return <AppShell>{resolvePage(window.location.pathname)}</AppShell>
+  return <AuthenticatedApp />
+}
+
+function AuthenticatedApp() {
+  return (
+    <JobEventStreamProvider>
+      <AppShell>{resolvePage(window.location.pathname)}</AppShell>
+    </JobEventStreamProvider>
+  )
 }
 
 function resolvePage(pathname: string) {

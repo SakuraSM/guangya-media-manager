@@ -159,6 +159,7 @@ function MatchRow({
   const recognitionMessage = matchRecognitionMessages(mediaMatch)[0]
   const isPending = isMetadataPending(mediaMatch)
   const isApprovable = isBatchApprovableMatch(mediaMatch)
+  const executionLabel = getExecutionLabel(mediaMatch)
   return (
     <div
       data-match-id={mediaMatch.id}
@@ -217,7 +218,16 @@ function MatchRow({
         <strong className={cn('hidden text-xs tabular-nums xl:block', confidenceClass(mediaMatch.confidence))}>
           {formatConfidence(mediaMatch.confidence)}
         </strong>
-        {isPending ? (
+        {executionLabel ? (
+          <Badge
+            variant="outline"
+            className={mediaMatch.execution_status === 'FAILED' ? 'text-destructive' : 'text-info'}
+            role={mediaMatch.execution_status === 'FAILED' ? 'alert' : undefined}
+            title={mediaMatch.execution_error ?? undefined}
+          >
+            {executionLabel}
+          </Badge>
+        ) : isPending ? (
           <Badge variant="outline" className="text-info">
             <LoaderCircle className="animate-spin" aria-hidden="true" />
             识别中
@@ -228,6 +238,17 @@ function MatchRow({
       </Button>
     </div>
   )
+}
+
+function getExecutionLabel(mediaMatch: MediaMatch): string | null {
+  if (!mediaMatch.execution_status) return null
+  return {
+    PENDING: '等待复制',
+    RUNNING: '复制中',
+    COMPLETED: '已复制',
+    SKIPPED: '重复跳过',
+    FAILED: mediaMatch.execution_error ? `失败：${mediaMatch.execution_error}` : '复制失败',
+  }[mediaMatch.execution_status]
 }
 
 function originLabel(origin: MediaMatch['match_origin']): string {

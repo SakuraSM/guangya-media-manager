@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import cloud, dashboard, jobs, metadata, organize_rules, session, settings
+from app.api import cloud, dashboard, events, jobs, metadata, organize_rules, session, settings
 from app.bootstrap import build_provider
 from app.config import get_settings, validate_runtime_security
 from app.database import SessionFactory, engine
@@ -96,6 +96,7 @@ app.include_router(dashboard.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
 app.include_router(metadata.router, prefix="/api")
 app.include_router(organize_rules.router, prefix="/api")
+app.include_router(events.router, prefix="/api")
 
 
 @app.get("/healthz", tags=["system"])

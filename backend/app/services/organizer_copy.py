@@ -11,6 +11,7 @@ from app.models import FileOperation, OrganizeJob, SourceItem
 from app.providers.base import CloudNode, CloudProvider
 from app.services.organizer_cloud import wait_for_provider_task
 from app.services.organizer_support import make_idempotency_key
+from app.services.progress_events import record_file_operation_progress
 
 RESULT_RESOLVE_DELAYS_SECONDS = (0.25, 0.5, 1.0)
 
@@ -141,11 +142,18 @@ class CopyExecutor:
                             "目标文件已存在且无法确认内容一致",
                         )
                     )
+                record_file_operation_progress(session, job, operation)
                 continue
 
             operation.status = OperationStatus.RUNNING
             operation.error_message = None
             prepared.append(_PreparedCopy(plan=plan_item, operation=operation))
+            record_file_operation_progress(
+                session,
+                job,
+                operation,
+                details={"message": "已加入云端复制批次"},
+            )
 
         await session.commit()
         if not prepared:
@@ -207,6 +215,9 @@ class CopyExecutor:
                     "复制任务已完成，但无法在目标目录认领对应文件",
                 )
             )
+        await session.commit()
+        for prepared_item in prepared:
+            record_file_operation_progress(session, job, prepared_item.operation)
         await session.commit()
         return results
 

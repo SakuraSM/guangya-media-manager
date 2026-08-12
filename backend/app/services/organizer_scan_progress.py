@@ -3,18 +3,23 @@ from pathlib import PurePosixPath
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain import MatchDecision, SourceClassification
+from app.domain import MatchDecision, ProgressStage, ProgressState, SourceClassification
 from app.models import MediaMatch, OrganizeJob, SourceItem
 from app.providers.base import CloudNode
 from app.services.directory_episode_inference import (
     DirectoryEpisodeInference,
     infer_directory_episode_sequences,
 )
-from app.services.media_parser import ParsedMediaName, parse_media_filename
+from app.services.media_parser import (
+    ParsedMediaName,
+    directory_context_evidence,
+    parse_media_filename,
+)
+from app.services.progress_events import record_job_progress, record_match_progress
 
 RULE_PARSE_START_PROGRESS = 0.36
 RULE_PARSE_COMPLETE_PROGRESS = 0.38
-RULE_PARSE_COMMIT_BATCH_SIZE = 25
+RULE_PARSE_COMMIT_BATCH_SIZE = 5
 METADATA_PENDING_REASON = "METADATA_PENDING"
 
 
@@ -45,6 +50,15 @@ class IncrementalMatchStore:
             self._session.add(record.media_match)
             if _should_commit_rule_batch(item_number, total_items):
                 self._update_rule_progress(item_number, total_items)
+                for persisted_record in records[-RULE_PARSE_COMMIT_BATCH_SIZE:]:
+                    record_match_progress(
+                        self._session,
+                        self._job,
+                        persisted_record.media_match,
+                        stage=ProgressStage.IDENTIFY,
+                        state=ProgressState.QUEUED,
+                        message="规则解析完成，等待元数据识别",
+                    )
                 await self._session.commit()
         return records
 
@@ -104,6 +118,12 @@ class IncrementalMatchStore:
             target_path="",
             reason_codes=reason_codes,
             group_key=group_key,
+            metadata_hint={
+                "directory_context": directory_context_evidence(
+                    parent_path,
+                    self._job.source_directory_path,
+                )
+            },
             episode_date=parsed.episode_date,
             release_info={
                 "quality_tags": list(parsed.quality_tags),
@@ -128,6 +148,15 @@ class IncrementalMatchStore:
         progress_span = RULE_PARSE_COMPLETE_PROGRESS - RULE_PARSE_START_PROGRESS
         self._job.progress = RULE_PARSE_START_PROGRESS + progress_span * progress_ratio
         self._job.current_stage = f"规则解析 {parsed_items}/{total_items}"
+        record_job_progress(
+            self._session,
+            self._job,
+            stage=ProgressStage.IDENTIFY,
+            state=ProgressState.RUNNING,
+            completed=parsed_items,
+            total=total_items,
+            message=self._job.current_stage,
+        )
 
 
 def _should_commit_rule_batch(item_number: int, total_items: int) -> bool:

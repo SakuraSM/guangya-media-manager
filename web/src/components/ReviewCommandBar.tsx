@@ -12,6 +12,7 @@ import {
   Sparkles,
   StopCircle,
   TriangleAlert,
+  Radio,
 } from 'lucide-react'
 import { PERCENT_SCALE } from '@/constants'
 import { JOB_STATUS, type Job, type JobStatus } from '@/types'
@@ -46,6 +47,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
+import type { EventStreamState } from '@/hooks/useJobEventStream'
 
 const NON_CANCELABLE_STATUSES: ReadonlySet<JobStatus> = new Set([
   JOB_STATUS.COMPLETED,
@@ -73,6 +75,10 @@ interface ReviewCommandBarProps {
   onExecute: () => void
   onCancel: () => void
   onStartAiReview: () => void
+  connectionState: EventStreamState
+  isFollowingProgress: boolean
+  onResumeFollowing: () => void
+  isProcessingOtherPage: boolean
 }
 
 export function ReviewCommandBar({
@@ -94,6 +100,10 @@ export function ReviewCommandBar({
   onExecute,
   onCancel,
   onStartAiReview,
+  connectionState,
+  isFollowingProgress,
+  onResumeFollowing,
+  isProcessingOtherPage,
 }: ReviewCommandBarProps) {
   const [isMobileSummaryOpen, setIsMobileSummaryOpen] = useState(false)
   const canCancel = !NON_CANCELABLE_STATUSES.has(job.status)
@@ -152,6 +162,20 @@ export function ReviewCommandBar({
               <CircleSlash aria-hidden="true" /> {job.failed_items} 失败
             </span>
           </div>
+          <div className="flex items-center gap-2 text-xs" aria-live="polite">
+            <Badge variant="outline" className={connectionState === 'CONNECTED' ? 'text-success' : 'text-warning'}>
+              <Radio aria-hidden="true" />
+              {connectionState === 'CONNECTED' ? '实时连接' : connectionState === 'CONNECTING' ? '正在连接' : '轮询恢复'}
+            </Badge>
+            {!isFollowingProgress ? (
+              <Button variant="ghost" size="sm" type="button" onClick={onResumeFollowing}>
+                恢复跟随
+              </Button>
+            ) : null}
+            {isProcessingOtherPage ? (
+              <span className="text-muted-foreground">正在处理其他分页中的记录</span>
+            ) : null}
+          </div>
         </div>
 
         <div className="hidden min-w-0 flex-col gap-3 sm:flex">
@@ -167,7 +191,7 @@ export function ReviewCommandBar({
             </div>
             <Progress value={progressPercentage} aria-label={`任务进度 ${progressPercentage}%`} />
             <small className="mt-2 block text-xs text-muted-foreground">
-              已复制 {formatBytes(job.copied_bytes)}
+              {progressDetailLabel(job)} · 已复制 {formatBytes(job.copied_bytes)}
             </small>
           </div>
         </div>
@@ -319,4 +343,11 @@ function RoutePath({
       <strong className="block truncate text-xs font-medium" title={path}>{path}</strong>
     </div>
   )
+}
+
+function progressDetailLabel(job: Job): string {
+  const completed = job.progress_detail.completed ?? 0
+  const total = job.progress_detail.total ?? 0
+  if (total <= 0) return job.progress_detail.message ?? '等待进度数据'
+  return `已处理 ${completed}/${total} · 成功 ${job.progress_detail.succeeded ?? 0} · 失败 ${job.progress_detail.failed ?? 0}`
 }

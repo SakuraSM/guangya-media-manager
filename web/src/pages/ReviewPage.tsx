@@ -14,9 +14,12 @@ import {
   type MatchDecision, type MediaMatch, type ReviewFilter, type SourceAction,
 } from '../types'
 import { groupMediaMatches, isEditableJobStatus, isReviewDecision } from '../utils/reviewGrouping'
+import { useJobEventStream } from '../hooks/useJobEvents'
 const DEFAULT_PAGE_SIZE = 20
 export function ReviewPage() {
   const queryClient = useQueryClient()
+  const eventStream = useJobEventStream()
+  const [isFollowingProgress, setIsFollowingProgress] = useState(true)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>(
@@ -35,16 +38,26 @@ export function ReviewPage() {
     page,
     pageSize,
     reviewFilter,
+    isRealtimeConnected: eventStream.connectionState === 'CONNECTED',
   })
   const selectedMatch = useMemo(() => {
     const pageMatches = matchesQuery.data?.items ?? []
+    const followedMatchId = isFollowingProgress
+      ? jobQuery.data?.progress_detail.current_match_id
+      : null
     return (
+      pageMatches.find((item) => item.id === followedMatchId) ??
       pageMatches.find((item) => item.id === selectedMatchId) ??
       pageMatches.find((item) => isReviewDecision(item.decision)) ??
       pageMatches[0] ??
       null
     )
-  }, [matchesQuery.data?.items, selectedMatchId])
+  }, [
+    isFollowingProgress,
+    jobQuery.data?.progress_detail.current_match_id,
+    matchesQuery.data?.items,
+    selectedMatchId,
+  ])
   const effectiveCandidateId =
     selectedCandidateId ??
     selectedMatch?.selected_tmdb_id ??
@@ -291,6 +304,7 @@ export function ReviewPage() {
   ].find((error) => error !== null)
 
   const handleSelectMatch = (mediaMatch: MediaMatch) => {
+    setIsFollowingProgress(false)
     setSelectedMatchId(mediaMatch.id)
     setSelectedCandidateId(
       mediaMatch.selected_tmdb_id ?? mediaMatch.candidates[0]?.tmdb_id ?? null,
@@ -372,6 +386,16 @@ export function ReviewPage() {
         canStartAiReview={isJobEditable && job.review_items > 0}
         isStartingAiReview={aiReviewMutation.isPending || job.ai_review_running}
         actionMessage={actionMessage}
+        connectionState={eventStream.connectionState}
+        isFollowingProgress={isFollowingProgress}
+        onResumeFollowing={() => setIsFollowingProgress(true)}
+        isProcessingOtherPage={Boolean(
+          isFollowingProgress &&
+          job.progress_detail.current_match_id &&
+          !matchPage.items.some(
+            (item) => item.id === job.progress_detail.current_match_id,
+          )
+        )}
         onApproveGroup={() => groupUpdateMutation.mutate()}
         onApproveSelection={batchApproval.approveSelected}
         onExecute={() => executeMutation.mutate()}

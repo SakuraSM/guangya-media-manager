@@ -69,6 +69,50 @@ export type OperationStatus =
   | 'SKIPPED'
   | 'FAILED'
 
+export type ProgressStage =
+  | 'SCAN'
+  | 'IDENTIFY'
+  | 'AUTO_APPROVE'
+  | 'AI_REVIEW'
+  | 'AUTO_EXECUTE'
+  | 'COPY'
+  | 'SCRAPE'
+  | 'FINALIZE'
+
+export type ProgressState =
+  | 'QUEUED'
+  | 'RUNNING'
+  | 'WAITING_REVIEW'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELED'
+
+export interface JobProgressDetail {
+  stage?: ProgressStage
+  state?: ProgressState
+  completed?: number
+  total?: number
+  succeeded?: number
+  failed?: number
+  skipped?: number
+  current_group?: string
+  current_match_id?: string
+  message?: string
+}
+
+export interface JobProgressEvent {
+  event_id: number
+  type: 'job.updated' | 'match.updated' | 'group.progress' | 'file-operation.updated'
+  job_id: string
+  scope: 'JOB' | 'MATCH' | 'GROUP' | 'FILE_OPERATION'
+  match_id: string | null
+  group_key: string | null
+  file_operation_id: string | null
+  payload: Record<string, unknown>
+  job: Job
+  created_at: string
+}
+
 export interface SessionState {
   is_authenticated: boolean
 }
@@ -110,6 +154,8 @@ export interface Job {
   target_directory_path: string
   status: JobStatus
   progress: number
+  revision: number
+  progress_detail: JobProgressDetail
   current_stage: string
   total_items: number
   approved_items: number

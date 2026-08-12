@@ -9,6 +9,8 @@ from app.domain import (
     MatchDecision,
     OperationStatus,
     OperationType,
+    ProgressStage,
+    ProgressState,
 )
 from app.models import AuditEvent, FileOperation, MediaMatch, OrganizeJob, SourceItem
 from app.providers.base import CloudNode, CloudProvider
@@ -26,6 +28,7 @@ from app.services.organizer_support import (
     load_job,
     make_idempotency_key,
 )
+from app.services.progress_events import record_job_progress
 
 COPY_PROGRESS_START = 0.5
 SCRAPE_PROGRESS = 0.88
@@ -121,6 +124,14 @@ class ExecutionWorkflow:
         job.config = {
             key: value for key, value in job.config.items() if key != "_auto_execute_queued"
         }
+        record_job_progress(
+            session,
+            job,
+            stage=ProgressStage.COPY,
+            state=ProgressState.RUNNING,
+            total=item_count,
+            message=job.current_stage,
+        )
         session.add(
             AuditEvent(
                 job_id=job.id,
@@ -197,6 +208,17 @@ class ExecutionWorkflow:
             if failed_results
             else f"整批复制完成，共 {len(results)} 个文件"
         )
+        record_job_progress(
+            session,
+            job,
+            stage=ProgressStage.COPY,
+            state=(ProgressState.FAILED if failed_results else ProgressState.COMPLETED),
+            completed=len(results),
+            total=len(results),
+            succeeded=len(results) - len(failed_results),
+            failed=len(failed_results),
+            message=job.current_stage,
+        )
         session.add(
             AuditEvent(
                 job_id=job.id,
@@ -245,6 +267,14 @@ class ExecutionWorkflow:
         job.status = JobStatus.SCRAPING
         job.progress = SCRAPE_PROGRESS
         job.current_stage = "生成 NFO 与媒体图片"
+        record_job_progress(
+            session,
+            job,
+            stage=ProgressStage.SCRAPE,
+            state=ProgressState.RUNNING,
+            total=len(matches),
+            message=job.current_stage,
+        )
         await session.commit()
         warning_count = await self._asset_scraper.scrape(session, job, matches, directories)
         session.add(
@@ -267,6 +297,13 @@ class ExecutionWorkflow:
         job.status = JobStatus.FINALIZING
         job.progress = FINALIZE_PROGRESS
         job.current_stage = "完成目标目录"
+        record_job_progress(
+            session,
+            job,
+            stage=ProgressStage.FINALIZE,
+            state=ProgressState.RUNNING,
+            message=job.current_stage,
+        )
         await session.commit()
         commit_result = await self._layout.commit_staging(
             staging_directory,
@@ -291,6 +328,17 @@ class ExecutionWorkflow:
         job.status = JobStatus.PARTIAL_FAILED if has_warnings else JobStatus.COMPLETED
         job.progress = 1
         job.current_stage = "整理完成，存在待处理项" if has_warnings else "整理完成"
+        record_job_progress(
+            session,
+            job,
+            stage=ProgressStage.FINALIZE,
+            state=(ProgressState.FAILED if has_warnings else ProgressState.COMPLETED),
+            completed=job.approved_items,
+            total=job.approved_items,
+            succeeded=job.approved_items,
+            failed=warning_count + len(commit_result.conflicts),
+            message=job.current_stage,
+        )
         session.add(
             AuditEvent(
                 job_id=job.id,
@@ -313,6 +361,13 @@ class ExecutionWorkflow:
     async def _cancel_job(self, session: AsyncSession, job: OrganizeJob) -> None:
         job.status = JobStatus.CANCELED
         job.current_stage = "已停止，暂存文件已保留"
+        record_job_progress(
+            session,
+            job,
+            stage=ProgressStage.COPY,
+            state=ProgressState.CANCELED,
+            message=job.current_stage,
+        )
         session.add(
             AuditEvent(
                 job_id=job.id,

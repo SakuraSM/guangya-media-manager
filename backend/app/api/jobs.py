@@ -1,6 +1,3 @@
-import asyncio
-import json
-from collections.abc import AsyncIterator, Sequence
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -10,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.dependencies import DatabaseSession, Services
-from app.database import SessionFactory
+from app.api.events import _event_stream as _progress_event_stream
 from app.domain import (
     JobStatus,
     MatchDecision,
@@ -19,6 +16,8 @@ from app.domain import (
     MetadataSource,
     OperationStatus,
     OperationType,
+    ProgressStage,
+    ProgressState,
     SourceAction,
     SourceClassification,
 )
@@ -56,6 +55,7 @@ from app.security import require_admin_session
 from app.services.metadata import MetadataServiceError
 from app.services.organizer import OrganizerError
 from app.services.organizer_support import candidate_to_dict
+from app.services.progress_events import record_job_progress
 
 router = APIRouter(
     prefix="/jobs",
@@ -576,6 +576,14 @@ async def start_ai_review(
         )
     job.config = {**job.config, "_ai_review_queued": True}
     job.current_stage = "等待 AI 审核作品名称"
+    record_job_progress(
+        session,
+        job,
+        stage=ProgressStage.AI_REVIEW,
+        state=ProgressState.QUEUED,
+        total=job.review_items,
+        message=job.current_stage,
+    )
     session.add(
         AuditEvent(
             job_id=job.id,
@@ -805,7 +813,7 @@ async def cancel_job(
 @router.get("/{job_id}/events")
 async def stream_job_events(job_id: str) -> StreamingResponse:
     return StreamingResponse(
-        _event_stream(job_id),
+        _progress_event_stream(job_id=job_id, cursor=0),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -832,6 +840,16 @@ async def _enqueue_auto_execute_if_ready(
         return
     job.config = {**job.config, "_auto_execute_queued": True}
     job.current_stage = "审批完成，等待自动整理"
+    record_job_progress(
+        session,
+        job,
+        stage=ProgressStage.AUTO_EXECUTE,
+        state=ProgressState.QUEUED,
+        completed=job.approved_items,
+        total=job.total_items,
+        succeeded=job.approved_items,
+        message=job.current_stage,
+    )
     session.add(
         AuditEvent(
             job_id=job.id,
@@ -927,40 +945,3 @@ def _organizer_http_error(error: OrganizerError) -> HTTPException:
         else status.HTTP_409_CONFLICT
     )
     return HTTPException(status_code=error_status, detail=error_message)
-
-
-async def _event_stream(job_id: str) -> AsyncIterator[str]:
-    last_event_id = ""
-    while True:
-        async with SessionFactory() as session:
-            statement = (
-                select(AuditEvent)
-                .where(AuditEvent.job_id == job_id)
-                .order_by(AuditEvent.created_at.asc())
-            )
-            events = (await session.scalars(statement)).all()
-            new_events = _events_after(events, last_event_id)
-            for event in new_events:
-                last_event_id = event.id
-                payload = json.dumps(
-                    {
-                        "id": event.id,
-                        "type": event.event_type,
-                        "message": event.message,
-                        "severity": event.severity,
-                        "created_at": event.created_at.isoformat(),
-                    },
-                    ensure_ascii=False,
-                )
-                yield f"id: {event.id}\nevent: job-event\ndata: {payload}\n\n"
-        yield ": keepalive\n\n"
-        await asyncio.sleep(1)
-
-
-def _events_after(events: Sequence[AuditEvent], last_event_id: str) -> Sequence[AuditEvent]:
-    if not last_event_id:
-        return events
-    for event_index, event in enumerate(events):
-        if event.id == last_event_id:
-            return events[event_index + 1 :]
-    return events

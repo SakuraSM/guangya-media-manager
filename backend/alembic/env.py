@@ -1,10 +1,12 @@
 import asyncio
 from logging.config import fileConfig
 
-from alembic import context
-from sqlalchemy import pool
+from alembic.script import ScriptDirectory
+from sqlalchemy import inspect, pool
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from alembic import context
 from app.config import get_settings
 from app.models import Base
 
@@ -27,10 +29,18 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def run_sync_migrations(connection: object) -> None:
+def run_sync_migrations(connection: Connection) -> None:
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
-        context.run_migrations()
+        # The first historical migration creates its baseline from the current
+        # SQLAlchemy metadata. Running the remaining incremental migrations on a
+        # truly empty database would therefore add the same columns twice. For a
+        # fresh install, create the current schema once and stamp it at head.
+        if not inspect(connection).get_table_names():
+            target_metadata.create_all(connection)
+            context.get_context().stamp(ScriptDirectory.from_config(config), "head")
+        else:
+            context.run_migrations()
 
 
 async def run_async_migrations() -> None:

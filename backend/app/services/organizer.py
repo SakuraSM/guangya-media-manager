@@ -14,6 +14,8 @@ from app.domain import (
     MediaType,
     MetadataSource,
     OutputLayout,
+    ProgressStage,
+    ProgressState,
     RegionBucket,
 )
 from app.models import (
@@ -66,6 +68,7 @@ from app.services.organizer_support import (
     target_path_for,
     validate_candidate,
 )
+from app.services.progress_events import record_job_progress
 
 __all__ = ["OrganizerError", "OrganizerService"]
 
@@ -153,6 +156,17 @@ class OrganizerService:
                     )
                 )
                 if should_auto_execute:
+                    job.current_stage = "审批完成，正在启动自动整理"
+                    record_job_progress(
+                        session,
+                        job,
+                        stage=ProgressStage.AUTO_EXECUTE,
+                        state=ProgressState.RUNNING,
+                        completed=job.approved_items,
+                        total=job.total_items,
+                        succeeded=job.approved_items,
+                        message=job.current_stage,
+                    )
                     session.add(
                         AuditEvent(
                             job_id=job.id,
@@ -222,6 +236,17 @@ class OrganizerService:
                     job.config.get("auto_execute_after_approval", False)
                 )
                 if should_auto_execute:
+                    job.current_stage = "AI 审核完成，正在启动自动整理"
+                    record_job_progress(
+                        session,
+                        job,
+                        stage=ProgressStage.AUTO_EXECUTE,
+                        state=ProgressState.RUNNING,
+                        completed=job.approved_items,
+                        total=job.total_items,
+                        succeeded=job.approved_items,
+                        message=job.current_stage,
+                    )
                     session.add(
                         AuditEvent(
                             job_id=job.id,

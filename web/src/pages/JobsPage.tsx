@@ -34,10 +34,12 @@ import {
 } from '@/components/ui/table'
 import { PERCENT_SCALE } from '@/constants'
 import { formatBytes, formatDateTime } from '@/utils/format'
+import { useJobEventStream } from '@/hooks/useJobEvents'
 
 const DEFAULT_PAGE_SIZE = 20
 
 export function JobsPage() {
+  const eventStream = useJobEventStream()
   const [isCreating, setIsCreating] = useState(false)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
@@ -45,7 +47,7 @@ export function JobsPage() {
     queryKey: ['jobs', 'page', page, pageSize],
     queryFn: () => api.getJobsPage(page, pageSize),
     placeholderData: (previousData) => previousData,
-    refetchInterval: 4_000,
+    refetchInterval: eventStream.connectionState === 'CONNECTED' ? false : 4_000,
   })
 
   if (jobsQuery.isPending) {
@@ -63,7 +65,7 @@ export function JobsPage() {
         <div>
           <h2 className="text-xl font-semibold tracking-tight">整理任务</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            任务按源文件到目标目录统一展示，状态每 4 秒自动刷新。
+            任务按源文件到目标目录统一展示，在线时实时更新。
           </p>
         </div>
         <div className="flex items-center gap-2">

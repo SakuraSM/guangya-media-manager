@@ -209,6 +209,18 @@ class DirectoryContext:
     season_number: int | None
 
 
+def directory_context_evidence(parent_path: str, source_root: str) -> dict[str, object]:
+    context = _parse_directory_context(parent_path, source_root)
+    evidence: dict[str, object] = {}
+    if context.title:
+        evidence["work_directory_title"] = context.title
+    if context.year is not None:
+        evidence["work_directory_year"] = context.year
+    if context.season_number is not None:
+        evidence["season_directory_number"] = context.season_number
+    return evidence
+
+
 def _extract_number(
     match: re.Match[str] | None, primary_group: str, alternate_group: str
 ) -> int | None:

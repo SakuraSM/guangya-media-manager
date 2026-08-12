@@ -192,6 +192,20 @@ def test_parses_real_world_specials_directory() -> None:
     assert parsed.season_number == 0
 
 
+def test_uses_second_level_work_and_season_directories_for_numeric_episode() -> None:
+    parsed = parse_media_filename(
+        "03.mp4",
+        parent_path="/光鸭云盘/电视剧/庆余年 (2019)/Season 02",
+        source_root="/光鸭云盘/电视剧",
+    )
+
+    assert parsed.title == "庆余年"
+    assert parsed.year == 2019
+    assert parsed.season_number == 2
+    assert parsed.episode_numbers == (3,)
+    assert "DIRECTORY_CONTEXT" in parsed.reason_codes
+
+
 def test_specials_subdirectory_removes_metadata_suffixes() -> None:
     source_root = "/光鸭云盘/爱情公寓 1-5季+电影+番外 4K"
     parsed = parse_media_filename(

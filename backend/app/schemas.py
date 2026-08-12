@@ -104,6 +104,8 @@ class JobView(ApiModel):
     target_directory_path: str
     status: JobStatus
     progress: float
+    revision: int = 0
+    progress_detail: dict[str, object] = Field(default_factory=dict)
     current_stage: str
     total_items: int
     approved_items: int

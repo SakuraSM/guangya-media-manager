@@ -8,6 +8,7 @@ interface UseReviewQueriesInput {
   page: number
   pageSize: number
   reviewFilter: ReviewFilter
+  isRealtimeConnected?: boolean
 }
 
 interface UseReviewQueriesResult {
@@ -22,6 +23,7 @@ export function useReviewQueries({
   page,
   pageSize,
   reviewFilter,
+  isRealtimeConnected = false,
 }: UseReviewQueriesInput): UseReviewQueriesResult {
   const jobsQuery = useQuery({ queryKey: ['jobs'], queryFn: api.getJobs })
   const searchParams = new URLSearchParams(window.location.search)
@@ -37,13 +39,13 @@ export function useReviewQueries({
     }),
     enabled: Boolean(selectedJobId),
     placeholderData: (previousPage) => previousPage,
-    refetchInterval: REVIEW_REFETCH_INTERVAL_MS,
+    refetchInterval: isRealtimeConnected ? false : REVIEW_REFETCH_INTERVAL_MS,
   })
   const jobQuery = useQuery({
     queryKey: ['job', selectedJobId],
     queryFn: () => api.getJob(selectedJobId),
     enabled: Boolean(selectedJobId),
-    refetchInterval: REVIEW_REFETCH_INTERVAL_MS,
+    refetchInterval: isRealtimeConnected ? false : REVIEW_REFETCH_INTERVAL_MS,
   })
   const sourceItemsQuery = useQuery({
     queryKey: ['source-items', selectedJobId, jobQuery.data?.status],

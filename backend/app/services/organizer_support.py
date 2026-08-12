@@ -5,12 +5,20 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain import JobStatus, MatchDecision, MediaType, MetadataSource
+from app.domain import (
+    JobStatus,
+    MatchDecision,
+    MediaType,
+    MetadataSource,
+    ProgressStage,
+    ProgressState,
+)
 from app.models import AuditEvent, MediaEntity, OrganizeJob
 from app.schemas import MatchCandidate as MatchCandidateSchema
 from app.services.media_parser import ParsedMediaName
 from app.services.metadata import MetadataCandidate
 from app.services.naming import NamingInput, build_target_relative_path
+from app.services.progress_events import record_job_progress
 
 
 class OrganizerError(RuntimeError):
@@ -37,6 +45,13 @@ async def update_job_state(
     job.status = status
     job.progress = progress
     job.current_stage = stage
+    record_job_progress(
+        session,
+        job,
+        stage=_progress_stage_for_job_status(status),
+        state=ProgressState.RUNNING,
+        message=stage,
+    )
     session.add(AuditEvent(job_id=job.id, event_type=event_type, message=message))
     await session.commit()
 
@@ -52,6 +67,14 @@ async def fail_job(
     job.status = JobStatus.PARTIAL_FAILED if partial else JobStatus.FAILED
     job.error_message = str(error)
     job.current_stage = message
+    record_job_progress(
+        session,
+        job,
+        stage=_progress_stage_for_job_status(job.status),
+        state=ProgressState.FAILED,
+        failed=max(job.failed_items, 1),
+        message=message,
+    )
     session.add(
         AuditEvent(
             job_id=job.id,
@@ -62,6 +85,16 @@ async def fail_job(
         )
     )
     await session.commit()
+
+
+def _progress_stage_for_job_status(status: JobStatus) -> ProgressStage:
+    return {
+        JobStatus.SCANNING: ProgressStage.SCAN,
+        JobStatus.IDENTIFYING: ProgressStage.IDENTIFY,
+        JobStatus.COPYING: ProgressStage.COPY,
+        JobStatus.SCRAPING: ProgressStage.SCRAPE,
+        JobStatus.FINALIZING: ProgressStage.FINALIZE,
+    }.get(status, ProgressStage.IDENTIFY)
 
 
 async def persist_metadata_candidate(

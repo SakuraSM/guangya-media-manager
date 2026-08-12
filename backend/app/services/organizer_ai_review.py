@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from app.domain import JobStatus, MatchDecision
+from app.domain import JobStatus, MatchDecision, ProgressStage, ProgressState
 from app.models import AuditEvent, MediaMatch, OrganizeJob, SourceItem
 from app.schemas import MatchCandidate as MatchCandidateSchema
 from app.services.media_parser import ParsedMediaName, parse_media_filename
@@ -20,6 +20,11 @@ from app.services.organizer_support import (
     load_job,
     persist_candidate_payload,
     validate_candidate,
+)
+from app.services.progress_events import (
+    record_group_progress,
+    record_job_progress,
+    record_match_progress,
 )
 
 AI_REVIEW_APPROVAL_THRESHOLD = 0.85
@@ -71,13 +76,44 @@ class AiReviewWorkflow:
             retained_groups = 0
             failed_groups = 0
             total_groups = len(pending_groups)
+            record_job_progress(
+                session,
+                job,
+                stage=ProgressStage.AI_REVIEW,
+                state=ProgressState.RUNNING,
+                total=total_groups,
+                message="AI 作品级审核开始",
+            )
+            await session.commit()
             for group_number, group_matches in enumerate(pending_groups.values(), start=1):
                 job.current_stage = f"AI 审核作品名称 {group_number}/{total_groups}"
+                group_key = group_matches[0].group_key or group_matches[0].id
+                record_job_progress(
+                    session,
+                    job,
+                    stage=ProgressStage.AI_REVIEW,
+                    state=ProgressState.RUNNING,
+                    completed=group_number - 1,
+                    total=total_groups,
+                    current_group=group_key,
+                    current_match_id=group_matches[0].id,
+                    message=job.current_stage,
+                )
                 await session.commit()
                 candidate = _representative_candidate(group_matches)
                 if candidate is None:
                     retained_groups += 1
                     _append_group_reason(group_matches, "AI_REVIEW_NO_CANDIDATE")
+                    await _record_unapproved_group(
+                        session=session,
+                        job=job,
+                        group_matches=group_matches,
+                        group_key=group_key,
+                        completed=group_number,
+                        total=total_groups,
+                        message="AI 没有可审核候选，保留人工处理",
+                        state=ProgressState.WAITING_REVIEW,
+                    )
                     continue
                 try:
                     verdict = await self._ai_service.review_title_match(
@@ -88,10 +124,30 @@ class AiReviewWorkflow:
                 except MetadataServiceError as error:
                     failed_groups += 1
                     _append_group_reason(group_matches, error.reason_code)
+                    await _record_unapproved_group(
+                        session=session,
+                        job=job,
+                        group_matches=group_matches,
+                        group_key=group_key,
+                        completed=group_number,
+                        total=total_groups,
+                        message=f"AI 审核失败：{error.reason_code}",
+                        state=ProgressState.FAILED,
+                    )
                     continue
                 if not verdict.is_match or verdict.confidence < AI_REVIEW_APPROVAL_THRESHOLD:
                     retained_groups += 1
                     _append_group_reason(group_matches, "AI_REVIEW_RETAINED")
+                    await _record_unapproved_group(
+                        session=session,
+                        job=job,
+                        group_matches=group_matches,
+                        group_key=group_key,
+                        completed=group_number,
+                        total=total_groups,
+                        message="AI 证据不足，保留人工审核",
+                        state=ProgressState.WAITING_REVIEW,
+                    )
                     continue
                 updated_items = await _approve_group(session, group_matches, candidate.tmdb_id)
                 if updated_items:
@@ -99,6 +155,30 @@ class AiReviewWorkflow:
                     approved_items += updated_items
                 else:
                     retained_groups += 1
+                group_state = (
+                    ProgressState.COMPLETED
+                    if updated_items
+                    else ProgressState.WAITING_REVIEW
+                )
+                for media_match in group_matches:
+                    record_match_progress(
+                        session,
+                        job,
+                        media_match,
+                        stage=ProgressStage.AI_REVIEW,
+                        state=group_state,
+                        message=("AI 审核通过" if updated_items else "AI 保留人工审核"),
+                    )
+                record_group_progress(
+                    session,
+                    job,
+                    group_key=group_key,
+                    stage=ProgressStage.AI_REVIEW,
+                    state=group_state,
+                    completed=group_number,
+                    total=total_groups,
+                    message=("AI 审核通过" if updated_items else "AI 保留人工审核"),
+                )
                 await session.commit()
 
             await _refresh_job_readiness(session, job)
@@ -115,6 +195,21 @@ class AiReviewWorkflow:
             } | {"ai_review_summary": summary}
             job.current_stage = (
                 f"AI 审核完成：通过 {approved_groups} 组，保留 {retained_groups + failed_groups} 组"
+            )
+            record_job_progress(
+                session,
+                job,
+                stage=ProgressStage.AI_REVIEW,
+                state=(
+                    ProgressState.WAITING_REVIEW
+                    if retained_groups + failed_groups
+                    else ProgressState.COMPLETED
+                ),
+                completed=total_groups,
+                total=total_groups,
+                succeeded=approved_groups,
+                failed=failed_groups,
+                message=job.current_stage,
             )
             session.add(
                 AuditEvent(
@@ -138,6 +233,13 @@ class AiReviewWorkflow:
             key: value for key, value in job.config.items() if key != "_ai_review_queued"
         }
         job.current_stage = message
+        record_job_progress(
+            session,
+            job,
+            stage=ProgressStage.AI_REVIEW,
+            state=ProgressState.WAITING_REVIEW,
+            message=message,
+        )
         session.add(
             AuditEvent(
                 job_id=job.id,
@@ -147,6 +249,39 @@ class AiReviewWorkflow:
             )
         )
         await session.commit()
+
+
+async def _record_unapproved_group(
+    *,
+    session: AsyncSession,
+    job: OrganizeJob,
+    group_matches: list[MediaMatch],
+    group_key: str,
+    completed: int,
+    total: int,
+    message: str,
+    state: ProgressState,
+) -> None:
+    for media_match in group_matches:
+        record_match_progress(
+            session,
+            job,
+            media_match,
+            stage=ProgressStage.AI_REVIEW,
+            state=state,
+            message=message,
+        )
+    record_group_progress(
+        session,
+        job,
+        group_key=group_key,
+        stage=ProgressStage.AI_REVIEW,
+        state=state,
+        completed=completed,
+        total=total,
+        message=message,
+    )
+    await session.commit()
 
 
 def _pending_groups(matches: list[MediaMatch]) -> dict[str, list[MediaMatch]]:
