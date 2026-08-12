@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Bot, ScanSearch, ShieldCheck, Workflow, X } from 'lucide-react'
 import { api } from '@/api/client'
 import type { CloudDirectory, CreateJobInput } from '@/types'
+import { DEFAULT_ORGANIZE_CONFIG } from '@/organizeConfig'
 import { DirectoryPicker } from '@/components/DirectoryPicker'
 import { ErrorNotice } from '@/components/ErrorNotice'
 import { ScrapingOptions } from '@/components/ScrapingOptions'
@@ -31,28 +32,6 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 
-const DEFAULT_CONFIG: CreateJobInput['config'] = {
-  generate_nfo: true,
-  download_poster: true,
-  download_fanart: true,
-  download_backdrop_alias: true,
-  download_season_poster: true,
-  download_episode_thumb: true,
-  season_artwork_compat: true,
-  scrape_metadata_language: 'zh-CN',
-  scrape_image_quality: 'STANDARD',
-  rename_subtitles: true,
-  auto_approve_threshold: 0.9,
-  review_threshold: 0.65,
-  auto_approve_enabled: true,
-  auto_execute_after_approval: false,
-  naming_profile: 'UNIVERSAL_ENHANCED',
-  extras_policy: 'EXCLUDE_REVIEWABLE',
-  sample_max_mb: 300,
-  exclude_globs: [],
-  include_paths: [],
-}
-
 interface NewJobPanelProps {
   onCreated: () => void
   onCancel: () => void
@@ -62,7 +41,7 @@ export function NewJobPanel({ onCreated, onCancel }: NewJobPanelProps) {
   const queryClient = useQueryClient()
   const [sourceDirectory, setSourceDirectory] = useState<CloudDirectory | null>(null)
   const [targetDirectory, setTargetDirectory] = useState<CloudDirectory | null>(null)
-  const [config, setConfig] = useState(DEFAULT_CONFIG)
+  const [config, setConfig] = useState(DEFAULT_ORGANIZE_CONFIG)
   const [excludeGlobsText, setExcludeGlobsText] = useState('')
   const createMutation = useMutation({
     mutationFn: async (input: CreateJobInput) => {
@@ -137,9 +116,36 @@ export function NewJobPanel({ onCreated, onCancel }: NewJobPanelProps) {
           <FieldLabel htmlFor="organize-mode">整理模式</FieldLabel>
           <Input id="organize-mode" value="复制后整理" disabled readOnly />
         </Field>
-        <Field data-disabled>
+        <Field>
           <FieldLabel htmlFor="media-layout">媒体布局</FieldLabel>
-          <Input id="media-layout" value="Plex / Jellyfin 通用增强" disabled readOnly />
+          <Select
+            value={config.output_layout}
+            onValueChange={(value) =>
+              setConfig((current) => ({ ...current, output_layout: value as typeof current.output_layout }))
+            }
+          >
+            <SelectTrigger id="media-layout" className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="STANDARD">标准 Movies / TV</SelectItem>
+              <SelectItem value="CLASSIFIED">按类型与地区分类</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="quality-profile">多版本偏好</FieldLabel>
+          <Select
+            value={config.quality_profile}
+            onValueChange={(value) =>
+              setConfig((current) => ({ ...current, quality_profile: value as typeof current.quality_profile }))
+            }
+          >
+            <SelectTrigger id="quality-profile" className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="QUALITY">质量优先</SelectItem>
+              <SelectItem value="COMPATIBILITY">兼容优先</SelectItem>
+              <SelectItem value="SPACE_SAVING">节省空间</SelectItem>
+            </SelectContent>
+          </Select>
         </Field>
         <Field>
           <FieldLabel htmlFor="extras-policy">附加视频</FieldLabel>

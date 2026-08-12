@@ -38,6 +38,13 @@ const APPROVABLE_MATCH: MediaMatch = {
   episode_title: '',
   episode_date: null,
   release_info: {},
+  library_category: 'TV',
+  region_bucket: 'OTHER',
+  classification_reasons: [],
+  quality_profile: {},
+  version_group_key: 'version-1',
+  version_score: 0,
+  version_recommendation: 'SINGLE',
 }
 
 describe('GroupedMatchTable', () => {

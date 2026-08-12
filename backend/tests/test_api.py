@@ -155,6 +155,33 @@ def test_job_view_exposes_automation_settings() -> None:
     assert isinstance(job["auto_execute_after_approval"], bool)
 
 
+def test_creates_lists_and_deletes_continuous_organize_rule() -> None:
+    with TestClient(app) as client:
+        client.post("/api/session/login", json={"password": "change-me"})
+        created_response = client.post(
+            "/api/organize-rules",
+            json={
+                "name": "每日增量整理",
+                "source_directory_id": "demo-source",
+                "source_directory_path": "/光鸭云盘/未整理",
+                "target_directory_id": "demo-target",
+                "target_directory_path": "/光鸭云盘/媒体库",
+                "schedule_type": "INTERVAL",
+                "interval_minutes": 60,
+                "run_immediately": False,
+            },
+        )
+        assert created_response.status_code == 201
+        rule = created_response.json()
+        listed_response = client.get("/api/organize-rules")
+        delete_response = client.delete(f"/api/organize-rules/{rule['id']}")
+
+    assert any(item["id"] == rule["id"] for item in listed_response.json())
+    assert rule["next_run_at"] is not None
+    assert rule["retry_limit"] == 2
+    assert delete_response.status_code == 204
+
+
 def test_batch_approves_selected_matches_atomically() -> None:
     with TestClient(app) as client:
         client.post("/api/session/login", json={"password": "change-me"})

@@ -29,6 +29,53 @@ class MediaType(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class LibraryCategory(StrEnum):
+    MOVIE = "MOVIE"
+    TV = "TV"
+    ANIME = "ANIME"
+    DOCUMENTARY = "DOCUMENTARY"
+    VARIETY = "VARIETY"
+
+
+class RegionBucket(StrEnum):
+    CN = "CN"
+    HK_TW = "HK_TW"
+    JP_KR = "JP_KR"
+    EUROPE_US = "EUROPE_US"
+    OTHER = "OTHER"
+
+
+class OutputLayout(StrEnum):
+    STANDARD = "STANDARD"
+    CLASSIFIED = "CLASSIFIED"
+
+
+class QualityProfile(StrEnum):
+    QUALITY = "QUALITY"
+    COMPATIBILITY = "COMPATIBILITY"
+    SPACE_SAVING = "SPACE_SAVING"
+
+
+class VersionRecommendationStatus(StrEnum):
+    SINGLE = "SINGLE"
+    PENDING = "PENDING"
+    CONFIRMED = "CONFIRMED"
+    NOT_SELECTED = "NOT_SELECTED"
+
+
+class RuleScheduleType(StrEnum):
+    MANUAL = "MANUAL"
+    INTERVAL = "INTERVAL"
+    CRON = "CRON"
+
+
+class JobTriggerType(StrEnum):
+    MANUAL = "MANUAL"
+    SCHEDULED = "SCHEDULED"
+    DIRTY_RETRY = "DIRTY_RETRY"
+    FAILED_RETRY = "FAILED_RETRY"
+
+
 class MetadataSource(StrEnum):
     TMDB = "TMDB"
     LOCAL = "LOCAL"

@@ -1,0 +1,26 @@
+import type { OrganizeConfig } from '@/types'
+
+export const DEFAULT_ORGANIZE_CONFIG: OrganizeConfig = {
+  generate_nfo: true,
+  download_poster: true,
+  download_fanart: true,
+  download_backdrop_alias: true,
+  download_season_poster: true,
+  download_episode_thumb: true,
+  season_artwork_compat: true,
+  scrape_metadata_language: 'zh-CN',
+  scrape_image_quality: 'STANDARD',
+  rename_subtitles: true,
+  auto_approve_threshold: 0.9,
+  review_threshold: 0.65,
+  auto_approve_enabled: true,
+  auto_execute_after_approval: false,
+  naming_profile: 'UNIVERSAL_ENHANCED',
+  extras_policy: 'EXCLUDE_REVIEWABLE',
+  sample_max_mb: 300,
+  exclude_globs: [],
+  include_paths: [],
+  output_layout: 'STANDARD',
+  include_region_directory: true,
+  quality_profile: 'QUALITY',
+}

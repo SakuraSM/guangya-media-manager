@@ -6,6 +6,7 @@ import type {
   CloudLoginStart,
   CloudLoginStatus,
   CreateJobInput,
+  CreateOrganizeRuleInput,
   Dashboard,
   Job,
   JobPage,
@@ -19,6 +20,9 @@ import type {
   MediaMatch,
   MediaMatchPage,
   MetadataProviderInfo,
+  OrganizeRule,
+  LibraryCategory,
+  RegionBucket,
   ReviewFilter,
   SourceAction,
   SourceItem,
@@ -123,6 +127,7 @@ async function requestJson<ResponseBody>(
         : `请求失败（${response.status}）`
     throw new ApiError(message, response.status)
   }
+  if (response.status === 204) return undefined as ResponseBody
   return (await response.json()) as ResponseBody
 }
 
@@ -150,6 +155,24 @@ export const api = {
   getJob: (jobId: string) => requestJson<Job>(`/jobs/${jobId}`),
   createJob: (input: CreateJobInput) =>
     requestJson<Job>('/jobs', { method: 'POST', body: JSON.stringify(input) }),
+  getOrganizeRules: () => requestJson<OrganizeRule[]>('/organize-rules'),
+  createOrganizeRule: (input: CreateOrganizeRuleInput) =>
+    requestJson<OrganizeRule>('/organize-rules', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  updateOrganizeRule: (ruleId: string, input: CreateOrganizeRuleInput) =>
+    requestJson<OrganizeRule>(`/organize-rules/${encodeURIComponent(ruleId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }),
+  deleteOrganizeRule: (ruleId: string) =>
+    requestJson<void>(`/organize-rules/${encodeURIComponent(ruleId)}`, { method: 'DELETE' }),
+  runOrganizeRule: (ruleId: string) =>
+    requestJson<{ job: Job; coalesced: boolean }>(
+      `/organize-rules/${encodeURIComponent(ruleId)}/run`,
+      { method: 'POST' },
+    ),
   scanJob: (jobId: string) =>
     requestJson<Job>(`/jobs/${jobId}/scan`, { method: 'POST' }),
   executeJob: (jobId: string) =>
@@ -203,6 +226,34 @@ export const api = {
           candidate_tmdb_id: candidateTmdbId ?? null,
         }),
       },
+    ),
+  updateGroupClassification: (
+    jobId: string,
+    groupKey: string,
+    libraryCategory: LibraryCategory,
+    regionBucket: RegionBucket,
+  ) =>
+    requestJson<{ group_key: string; updated_items: number }>(
+      `/jobs/${jobId}/groups/${encodeURIComponent(groupKey)}/classification`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          library_category: libraryCategory,
+          region_bucket: regionBucket,
+        }),
+      },
+    ),
+  confirmVersionGroup: (jobId: string, versionGroupKey: string, selectedMatchIds: string[]) =>
+    requestJson<{ version_group_key: string; updated_items: number }>(
+      `/jobs/${jobId}/version-groups/${encodeURIComponent(versionGroupKey)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ selected_match_ids: selectedMatchIds }),
+      },
+    ),
+  getVersionGroup: (jobId: string, versionGroupKey: string) =>
+    requestJson<MediaMatch[]>(
+      `/jobs/${jobId}/version-groups/${encodeURIComponent(versionGroupKey)}`,
     ),
   retryMediaGroup: (jobId: string, groupKey: string) =>
     requestJson<{ group_key: string; updated_items: number }>(

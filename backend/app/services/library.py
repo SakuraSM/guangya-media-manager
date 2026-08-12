@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import date
 from pathlib import PurePosixPath
 
 from sqlalchemy import select
@@ -279,7 +280,11 @@ def _append_fallback_episodes(
                 episode_number=episode_number,
                 title=episode_title,
                 overview="",
-                air_date=media_match.episode_date,
+                air_date=(
+                    date.fromisoformat(media_match.episode_date)
+                    if media_match.episode_date
+                    else None
+                ),
                 still_url=None,
                 source_filename=source_item.filename,
                 target_path=media_match.target_path,

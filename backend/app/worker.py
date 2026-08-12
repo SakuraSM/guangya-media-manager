@@ -16,6 +16,7 @@ from app.models import AuditEvent, OrganizeJob
 from app.providers.base import CloudProvider
 from app.security import TokenCipher
 from app.services.login_manager import LoginManager
+from app.services.organize_rules import OrganizeRuleService, enqueue_raw, scheduler_loop
 from app.services.organizer import OrganizerError
 from app.services.queue import QUEUE_NAME
 
@@ -41,6 +42,12 @@ async def run_worker() -> None:
         socket_timeout=10,
     )
     logger.info("Worker started")
+    async def enqueue(action: str, job_id: str) -> None:
+        await enqueue_raw(settings, action, job_id)
+
+    scheduler_task = asyncio.create_task(
+        scheduler_loop(OrganizeRuleService(SessionFactory, settings, enqueue))
+    )
     try:
         while True:
             try:
@@ -68,6 +75,8 @@ async def run_worker() -> None:
                     extra={"job_id": job_id, "action": action},
                 )
     finally:
+        scheduler_task.cancel()
+        await asyncio.gather(scheduler_task, return_exceptions=True)
         await redis.aclose()
 
 

@@ -3,6 +3,7 @@ import {
   FolderKanban,
   LayoutDashboard,
   ListChecks,
+  CalendarClock,
   LogOut,
   Settings,
 } from 'lucide-react'
@@ -50,6 +51,7 @@ import {
 const NAVIGATION_ITEMS = [
   { to: '/', label: '总览', icon: LayoutDashboard },
   { to: '/jobs', label: '整理任务', icon: FolderKanban },
+  { to: '/rules', label: '持续整理', icon: CalendarClock },
   { to: '/library', label: '媒体库', icon: Clapperboard },
   { to: '/review', label: '匹配审核', icon: ListChecks },
   { to: '/settings', label: '设置', icon: Settings },
@@ -58,6 +60,7 @@ const NAVIGATION_ITEMS = [
 const PAGE_TITLES: Record<string, string> = {
   '/': '媒体整理总览',
   '/jobs': '整理任务',
+  '/rules': '持续整理',
   '/review': '匹配审核',
   '/library': '媒体库',
   '/settings': '系统设置',

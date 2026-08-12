@@ -7,6 +7,7 @@ import { JobsPage } from './pages/JobsPage'
 import { LibraryPage } from './pages/LibraryPage'
 import { LoginPage } from './pages/LoginPage'
 import { ReviewPage } from './pages/ReviewPage'
+import { RulesPage } from './pages/RulesPage'
 import { SettingsPage } from './pages/SettingsPage'
 
 export function App() {
@@ -36,6 +37,8 @@ function resolvePage(pathname: string) {
       return <ReviewPage />
     case '/library':
       return <LibraryPage />
+    case '/rules':
+      return <RulesPage />
     case '/settings':
       return <SettingsPage />
     default:

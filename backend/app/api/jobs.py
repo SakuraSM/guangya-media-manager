@@ -16,6 +16,7 @@ from app.domain import (
     MatchDecision,
     MatchReviewState,
     MediaType,
+    MetadataSource,
     OperationStatus,
     OperationType,
     SourceAction,
@@ -44,9 +45,12 @@ from app.schemas import (
     SourceItemView,
     TmdbEpisodeSummary,
     TmdbSeasonSummary,
+    UpdateClassificationRequest,
     UpdateMatchRequest,
     UpdateMediaGroupRequest,
     UpdateSourceItemRequest,
+    UpdateVersionGroupRequest,
+    VersionGroupUpdateResult,
 )
 from app.security import require_admin_session
 from app.services.metadata import MetadataServiceError
@@ -374,6 +378,87 @@ async def update_source_item(
     }:
         await services.queue.enqueue("scan", job_id)
     return response
+
+
+@router.put(
+    "/{job_id}/groups/{group_key}/classification",
+    response_model=MediaGroupUpdateResult,
+)
+async def update_group_classification(
+    job_id: str,
+    group_key: str,
+    request: UpdateClassificationRequest,
+    session: DatabaseSession,
+    services: Services,
+) -> MediaGroupUpdateResult:
+    try:
+        updated_items = await services.organizer.update_group_classification(
+            job_id=job_id,
+            group_key=group_key,
+            category=request.library_category,
+            region=request.region_bucket,
+            session=session,
+        )
+    except OrganizerError as error:
+        raise _organizer_http_error(error) from error
+    return MediaGroupUpdateResult(group_key=group_key, updated_items=updated_items)
+
+
+@router.put(
+    "/{job_id}/version-groups/{version_group_key}",
+    response_model=VersionGroupUpdateResult,
+)
+async def confirm_version_group(
+    job_id: str,
+    version_group_key: str,
+    request: UpdateVersionGroupRequest,
+    session: DatabaseSession,
+    services: Services,
+) -> VersionGroupUpdateResult:
+    try:
+        updated_items = await services.organizer.confirm_version_group(
+            job_id=job_id,
+            version_group_key=version_group_key,
+            selected_match_ids=request.selected_match_ids,
+            session=session,
+        )
+    except OrganizerError as error:
+        raise _organizer_http_error(error) from error
+    await _enqueue_auto_execute_if_ready(job_id, session, services)
+    return VersionGroupUpdateResult(
+        version_group_key=version_group_key,
+        updated_items=updated_items,
+    )
+
+
+@router.get(
+    "/{job_id}/version-groups/{version_group_key}",
+    response_model=list[MediaMatchView],
+)
+async def get_version_group(
+    job_id: str,
+    version_group_key: str,
+    session: DatabaseSession,
+) -> list[MediaMatchView]:
+    await _get_job_or_404(session, job_id)
+    matches = list(
+        (
+            await session.scalars(
+                select(MediaMatch)
+                .join(SourceItem)
+                .options(
+                    selectinload(MediaMatch.source_item),
+                    selectinload(MediaMatch.media_entity),
+                )
+                .where(
+                    SourceItem.job_id == job_id,
+                    MediaMatch.version_group_key == version_group_key,
+                )
+                .order_by(MediaMatch.version_score.desc())
+            )
+        ).all()
+    )
+    return [_to_match_view(media_match) for media_match in matches]
 
 
 @router.put(
@@ -788,7 +873,11 @@ def _to_match_view(
         metadata_source=(
             media_match.media_entity.metadata_source if media_match.media_entity else None
         ),
-        metadata_provider=media_match.metadata_provider,
+        metadata_provider=(
+            MetadataSource(media_match.metadata_provider)
+            if media_match.metadata_provider
+            else None
+        ),
         provider_id=media_match.provider_id,
         match_origin=media_match.match_origin,
         metadata_hint=media_match.metadata_hint,
@@ -802,6 +891,13 @@ def _to_match_view(
         episode_title=media_match.episode_title,
         episode_date=media_match.episode_date,
         release_info=media_match.release_info,
+        library_category=media_match.library_category,
+        region_bucket=media_match.region_bucket,
+        classification_reasons=media_match.classification_reasons,
+        quality_profile=media_match.quality_profile,
+        version_group_key=media_match.version_group_key,
+        version_score=media_match.version_score,
+        version_recommendation=media_match.version_recommendation,
         execution_status=(execution_operation.status if execution_operation else None),
         execution_error=(execution_operation.error_message if execution_operation else None),
     )

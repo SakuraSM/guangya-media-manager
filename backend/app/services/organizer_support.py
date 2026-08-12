@@ -74,6 +74,11 @@ async def persist_metadata_candidate(
         )
     )
     if existing:
+        if candidate.metadata:
+            existing.metadata_snapshot = {
+                **existing.metadata_snapshot,
+                "metadata": candidate.metadata,
+            }
         return existing
     entity = MediaEntity(
         tmdb_id=candidate.tmdb_id,

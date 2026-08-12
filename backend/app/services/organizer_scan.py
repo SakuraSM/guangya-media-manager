@@ -10,6 +10,8 @@ from app.domain import (
     MatchDecision,
     MatchOrigin,
     MediaType,
+    OutputLayout,
+    QualityProfile,
     SourceClassification,
 )
 from app.models import (
@@ -22,12 +24,14 @@ from app.models import (
     SourceItem,
 )
 from app.providers.base import CloudNode, CloudProvider
+from app.services.incremental_scan import IncrementalDirectoryScanner
 from app.services.match_decision import (
     DecisionReason,
     DecisionSeverity,
     MatchDecisionResult,
     decide_identity_match,
 )
+from app.services.media_classification import apply_output_layout, classify_media
 from app.services.media_parser import (
     ParsedMediaName,
     parse_media_filename,
@@ -69,6 +73,7 @@ from app.services.organizer_support import (
     target_path_for_entity,
     update_job_state,
 )
+from app.services.quality import build_quality_decision, version_group_key
 from app.services.source_classifier import (
     ClassificationPolicy,
     ClassificationResult,
@@ -129,10 +134,25 @@ class ScanWorkflow:
                 message="开始递归扫描源目录",
             )
             try:
-                cloud_nodes = await self._scan_directory_tree(
-                    root_id=job.source_directory_id,
-                    root_path=job.source_directory_path,
-                )
+                scan_result = await IncrementalDirectoryScanner(self._provider).scan(session, job)
+                cloud_nodes = scan_result.nodes
+                job.scanned_directories = scan_result.scanned_directories
+                job.skipped_directories = scan_result.skipped_directories
+                job.changed_items = scan_result.changed_items
+                await session.commit()
+                if job.rule_id and not cloud_nodes:
+                    job.status = JobStatus.COMPLETED
+                    job.progress = 1
+                    job.current_stage = "增量扫描完成，没有变化"
+                    session.add(
+                        AuditEvent(
+                            job_id=job.id,
+                            event_type="INCREMENTAL_SCAN_UNCHANGED",
+                            message=f"检查 {job.scanned_directories} 个目录，未发现新增或变化文件",
+                        )
+                    )
+                    await session.commit()
+                    return
                 if await _is_cancel_requested(session, job.id):
                     await _cancel_scan(session, job)
                     return
@@ -183,18 +203,6 @@ class ScanWorkflow:
                 )
             except (OrganizerError, MetadataServiceError, RuntimeError) as error:
                 await fail_job(session, job, "扫描或识别失败", error)
-
-    async def _scan_directory_tree(self, *, root_id: str, root_path: str) -> list[CloudNode]:
-        discovered: list[CloudNode] = []
-        pending: list[tuple[str, str, int]] = [(root_id, root_path, 0)]
-        while pending:
-            parent_id, parent_path, depth = pending.pop()
-            if depth > MAX_SCAN_DEPTH:
-                raise OrganizerError("Directory nesting exceeds safe scan depth")
-            nodes = await self._provider.list_directory(parent_id, parent_path)
-            discovered.extend(nodes)
-            pending.extend((node.id, node.path, depth + 1) for node in nodes if node.is_directory)
-        return discovered
 
     async def _begin_identification(
         self, session: AsyncSession, job: OrganizeJob, media_count: int
@@ -284,6 +292,16 @@ class ScanWorkflow:
                 )
                 await session.commit()
         await self._associate_subtitles(session, job, subtitle_nodes)
+        await _apply_version_recommendations(session, job)
+        decisions = list(
+            (
+                await session.scalars(
+                    select(MediaMatch.decision)
+                    .join(SourceItem)
+                    .where(SourceItem.job_id == job.id)
+                )
+            ).all()
+        )
         await self._complete_identification(session, job, decisions)
 
     async def _prefetch_group_metadata(
@@ -678,10 +696,52 @@ class ScanWorkflow:
             "release_group": parsed.release_group,
             "part_number": parsed.part_number,
         }
+        classification = classify_media(
+            media_type=parsed.media_type,
+            title=(entity.title if entity is not None else parsed.title),
+            metadata=(entity.metadata_snapshot if entity is not None else None),
+        )
+        media_match.library_category = classification.category
+        media_match.region_bucket = classification.region
+        media_match.classification_reasons = list(classification.reasons)
+        media_match.target_path = apply_output_layout(
+            media_match.target_path,
+            category=classification.category,
+            region=classification.region,
+            classified=job.config.get("output_layout") == OutputLayout.CLASSIFIED.value,
+            include_region=bool(job.config.get("include_region_directory", True)),
+        )
+        try:
+            quality_preference = QualityProfile(
+                str(job.config.get("quality_profile", QualityProfile.QUALITY.value))
+            )
+        except ValueError:
+            quality_preference = QualityProfile.QUALITY
+        quality = build_quality_decision(
+            filename=source_item.filename,
+            release_info=media_match.release_info,
+            size_bytes=source_item.size_bytes,
+            preference=quality_preference,
+        )
+        media_match.quality_profile = {**quality.profile, "score_reason": quality.reason}
+        media_match.version_score = quality.score
         media_match.metadata_provider = (
             "TMDB" if top_candidate is not None else "LOCAL" if entity is not None else None
         )
         media_match.provider_id = str(top_candidate.tmdb_id) if top_candidate else None
+        media_match.version_group_key = version_group_key(
+            identity=(
+                f"{media_match.metadata_provider}:{media_match.provider_id}"
+                if media_match.provider_id
+                else media_match.group_key
+            ),
+            media_type=parsed.media_type,
+            season=parsed.season_number,
+            episodes=list(parsed.episode_numbers),
+            edition=parsed.edition,
+            part_number=parsed.part_number,
+        )
+        media_match.version_recommendation = "SINGLE"
         media_match.match_origin = (
             hint.origin.value
             if hint is not None
@@ -819,6 +879,54 @@ class ScanWorkflow:
                 )
             )
         await session.commit()
+
+
+async def _apply_version_recommendations(session: AsyncSession, job: OrganizeJob) -> None:
+    matches = list(
+        (
+            await session.scalars(
+                select(MediaMatch)
+                .join(SourceItem)
+                .where(
+                    SourceItem.job_id == job.id,
+                    MediaMatch.decision.in_(
+                        [MatchDecision.AUTO_APPROVED, MatchDecision.APPROVED, MatchDecision.REVIEW]
+                    ),
+                )
+            )
+        ).all()
+    )
+    groups: dict[str, list[MediaMatch]] = {}
+    for media_match in matches:
+        if media_match.version_group_key:
+            groups.setdefault(media_match.version_group_key, []).append(media_match)
+    for group_matches in groups.values():
+        if len(group_matches) == 1:
+            group_matches[0].version_recommendation = "SINGLE"
+            continue
+        recommended = max(group_matches, key=lambda item: item.version_score)
+        for media_match in group_matches:
+            media_match.version_recommendation = "PENDING"
+            media_match.decision = MatchDecision.REVIEW
+            media_match.decision_reasons = [
+                *media_match.decision_reasons,
+                {
+                    "code": "VERSION_CONFIRMATION_REQUIRED",
+                    "message": (
+                        "检测到同一内容的多个版本；当前为推荐版本，确认后执行"
+                        if media_match.id == recommended.id
+                        else "检测到同一内容的多个版本；请与推荐版本比较后选择"
+                    ),
+                    "severity": "WARNING",
+                    "overridable": True,
+                    "origin": "QUALITY_PROFILE",
+                },
+            ]
+            media_match.quality_profile = {
+                **media_match.quality_profile,
+                "recommended": media_match.id == recommended.id,
+                "recommendation_reason": "按当前质量偏好得分最高",
+            }
 
 
 def _summarize_decisions(

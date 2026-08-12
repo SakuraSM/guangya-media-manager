@@ -107,7 +107,8 @@ export function GroupedMatchTable({
             disabled={!isSelectionEnabled || approvableMatches.length === 0}
             onCheckedChange={onTogglePageSelection}
           />
-          选择本页可批准项
+          <span className="sm:hidden">本页全选</span>
+          <span className="hidden sm:inline">选择本页可批准项</span>
         </label>
       </div>
       <ScrollArea className="min-h-0 flex-1" viewportRef={viewportRef}>
@@ -175,14 +176,16 @@ function MatchRow({
       />
       <Button
         variant="ghost"
-        className="grid h-auto min-w-0 grid-cols-[auto_minmax(8rem,0.9fr)_minmax(8rem,1.1fr)_auto_auto] gap-3 rounded-none px-1 py-3 text-left"
+        className="grid h-auto min-w-0 grid-cols-[minmax(0,1fr)_minmax(6rem,0.8fr)_auto] gap-2 rounded-none px-1 py-3 text-left xl:grid-cols-[auto_minmax(8rem,0.9fr)_minmax(8rem,1.1fr)_auto_auto] xl:gap-3"
         type="button"
         onClick={() => onSelectMatch(mediaMatch)}
       >
-        <Poster
-          src={selectedCandidate?.poster_url ?? null}
-          title={selectedCandidate?.title ?? mediaMatch.parsed_title}
-        />
+        <span className="hidden xl:block">
+          <Poster
+            src={selectedCandidate?.poster_url ?? null}
+            title={selectedCandidate?.title ?? mediaMatch.parsed_title}
+          />
+        </span>
         <span className="min-w-0">
           <strong className="block truncate text-xs font-medium">{episodeLabel(mediaMatch)}</strong>
           <OriginalFileInfo
@@ -191,9 +194,14 @@ function MatchRow({
           />
         </span>
         <span className="min-w-0">
-          <strong className="block truncate text-xs font-medium">
-            {selectedCandidate?.title ?? '未找到候选'}
-          </strong>
+          <span className="flex items-center justify-between gap-2">
+            <strong className="block min-w-0 truncate text-xs font-medium">
+              {selectedCandidate?.title ?? '未找到候选'}
+            </strong>
+            <strong className={cn('shrink-0 text-[0.68rem] tabular-nums xl:hidden', confidenceClass(mediaMatch.confidence))}>
+              {formatConfidence(mediaMatch.confidence)}
+            </strong>
+          </span>
           <Badge variant="outline" className="mt-1 max-w-full text-[0.62rem]">
             {originLabel(mediaMatch.match_origin)}
           </Badge>
@@ -206,7 +214,7 @@ function MatchRow({
             {recognitionMessage ?? selectedCandidate?.original_title ?? mediaMatch.parsed_title}
           </small>
         </span>
-        <strong className={cn('text-xs tabular-nums', confidenceClass(mediaMatch.confidence))}>
+        <strong className={cn('hidden text-xs tabular-nums xl:block', confidenceClass(mediaMatch.confidence))}>
           {formatConfidence(mediaMatch.confidence)}
         </strong>
         {isPending ? (

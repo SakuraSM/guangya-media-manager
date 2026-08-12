@@ -18,11 +18,15 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from app.domain import (
     AccountStatus,
     JobStatus,
+    JobTriggerType,
+    LibraryCategory,
     MatchDecision,
     MediaType,
     MetadataSource,
     OperationStatus,
     OperationType,
+    RegionBucket,
+    RuleScheduleType,
     SourceAction,
     SourceClassification,
 )
@@ -79,6 +83,15 @@ class OrganizeJob(Base, TimestampMixin):
     copied_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    rule_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organize_rules.id", ondelete="SET NULL"), nullable=True
+    )
+    trigger_type: Mapped[JobTriggerType] = mapped_column(
+        String(24), default=JobTriggerType.MANUAL
+    )
+    scanned_directories: Mapped[int] = mapped_column(default=0)
+    skipped_directories: Mapped[int] = mapped_column(default=0)
+    changed_items: Mapped[int] = mapped_column(default=0)
 
     source_items: Mapped[list["SourceItem"]] = relationship(
         back_populates="job", cascade="all, delete-orphan"
@@ -217,6 +230,17 @@ class MediaMatch(Base, TimestampMixin):
     match_origin: Mapped[str] = mapped_column(String(32), default="RULE")
     metadata_hint: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     decision_reasons: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list)
+    library_category: Mapped[LibraryCategory] = mapped_column(
+        String(24), default=LibraryCategory.MOVIE
+    )
+    region_bucket: Mapped[RegionBucket] = mapped_column(
+        String(24), default=RegionBucket.OTHER
+    )
+    classification_reasons: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list)
+    quality_profile: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    version_group_key: Mapped[str] = mapped_column(String(512), default="")
+    version_score: Mapped[float] = mapped_column(Float, default=0)
+    version_recommendation: Mapped[str] = mapped_column(String(24), default="SINGLE")
 
     source_item: Mapped[SourceItem] = relationship(back_populates="media_match")
     media_entity: Mapped[MediaEntity | None] = relationship()
@@ -286,3 +310,64 @@ class AppSetting(Base, TimestampMixin):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     encrypted_value: Mapped[str] = mapped_column(Text)
+
+
+class OrganizeRule(Base, TimestampMixin):
+    __tablename__ = "organize_rules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(160))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    source_directory_id: Mapped[str] = mapped_column(String(128))
+    source_directory_path: Mapped[str] = mapped_column(String(512))
+    target_directory_id: Mapped[str] = mapped_column(String(128))
+    target_directory_path: Mapped[str] = mapped_column(String(512))
+    config: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    schedule_type: Mapped[RuleScheduleType] = mapped_column(
+        String(24), default=RuleScheduleType.MANUAL
+    )
+    interval_minutes: Mapped[int | None] = mapped_column(nullable=True)
+    cron_expression: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    timezone: Mapped[str] = mapped_column(String(64), default="Asia/Shanghai")
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_job_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retry_limit: Mapped[int] = mapped_column(default=2)
+    retry_count: Mapped[int] = mapped_column(default=0)
+    retry_backoff_minutes: Mapped[int] = mapped_column(default=5)
+
+
+class DirectorySnapshot(Base, TimestampMixin):
+    __tablename__ = "directory_snapshots"
+    __table_args__ = (
+        UniqueConstraint("rule_id", "cloud_directory_id", name="uq_rule_directory_snapshot"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    rule_id: Mapped[str] = mapped_column(
+        ForeignKey("organize_rules.id", ondelete="CASCADE"), index=True
+    )
+    cloud_directory_id: Mapped[str] = mapped_column(String(128))
+    directory_path: Mapped[str] = mapped_column(String(1024))
+    child_signature: Mapped[str] = mapped_column(String(64))
+    child_count: Mapped[int] = mapped_column(default=0)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class RuleSourceItem(Base, TimestampMixin):
+    __tablename__ = "rule_source_items"
+    __table_args__ = (
+        UniqueConstraint("rule_id", "cloud_file_id", name="uq_rule_source_item"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    rule_id: Mapped[str] = mapped_column(
+        ForeignKey("organize_rules.id", ondelete="CASCADE"), index=True
+    )
+    cloud_file_id: Mapped[str] = mapped_column(String(128))
+    source_path: Mapped[str] = mapped_column(String(1024))
+    fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    state: Mapped[str] = mapped_column(String(16), default="ACTIVE")
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

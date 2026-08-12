@@ -75,7 +75,9 @@ def build_subtitle_filename(media_target_path: str, source_filename: str) -> str
 
 def _release_suffix(parsed: ParsedMediaName) -> str:
     tags: list[str] = []
-    release_tags = parsed.quality_tags or ((parsed.edition,) if parsed.edition else ())
+    release_tags = tuple(
+        tag for tag in ((parsed.edition,) + parsed.quality_tags) if tag
+    )
     for tag in release_tags:
         sanitized = sanitize_path_segment(tag)
         if sanitized and sanitized.casefold() not in {existing.casefold() for existing in tags}:

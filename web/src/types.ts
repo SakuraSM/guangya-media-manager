@@ -43,6 +43,12 @@ export const REVIEW_FILTER = {
 export type ReviewFilter = (typeof REVIEW_FILTER)[keyof typeof REVIEW_FILTER]
 export type MediaType = 'MOVIE' | 'TV' | 'UNKNOWN'
 export type MetadataSource = 'TMDB' | 'LOCAL'
+export type LibraryCategory = 'MOVIE' | 'TV' | 'ANIME' | 'DOCUMENTARY' | 'VARIETY'
+export type RegionBucket = 'CN' | 'HK_TW' | 'JP_KR' | 'EUROPE_US' | 'OTHER'
+export type OutputLayout = 'STANDARD' | 'CLASSIFIED'
+export type QualityProfile = 'QUALITY' | 'COMPATIBILITY' | 'SPACE_SAVING'
+export type RuleScheduleType = 'MANUAL' | 'INTERVAL' | 'CRON'
+export type JobTriggerType = 'MANUAL' | 'SCHEDULED' | 'DIRTY_RETRY' | 'FAILED_RETRY'
 
 export const SOURCE_CLASSIFICATION = {
   MEDIA: 'MEDIA',
@@ -115,6 +121,11 @@ export interface Job {
   auto_approve_enabled: boolean
   auto_execute_after_approval: boolean
   ai_review_running: boolean
+  rule_id: string | null
+  trigger_type: JobTriggerType
+  scanned_directories: number
+  skipped_directories: number
+  changed_items: number
   created_at: string
   updated_at: string
 }
@@ -173,6 +184,24 @@ export interface MediaMatch {
     release_group?: string
     part_number?: number | null
   }
+  library_category: LibraryCategory
+  region_bucket: RegionBucket
+  classification_reasons: Array<Record<string, unknown>>
+  quality_profile: {
+    resolution?: string
+    source?: string
+    hdr?: string
+    codec?: string
+    audio?: string
+    size_bytes?: number
+    preference?: QualityProfile
+    recommended?: boolean
+    recommendation_reason?: string
+    score_reason?: string
+  }
+  version_group_key: string
+  version_score: number
+  version_recommendation: 'SINGLE' | 'PENDING' | 'CONFIRMED' | 'NOT_SELECTED'
   execution_status?: OperationStatus | null
   execution_error?: string | null
 }
@@ -342,13 +371,7 @@ export interface AppSettings {
   review_threshold: number
 }
 
-export interface CreateJobInput {
-  name: string
-  source_directory_id: string
-  source_directory_path: string
-  target_directory_id: string
-  target_directory_path: string
-  config: {
+export interface OrganizeConfig {
     generate_nfo: boolean
     download_poster: boolean
     download_fanart: boolean
@@ -368,5 +391,57 @@ export interface CreateJobInput {
     sample_max_mb: number
     exclude_globs: string[]
     include_paths: string[]
-  }
+    output_layout: OutputLayout
+    include_region_directory: boolean
+    quality_profile: QualityProfile
+}
+
+export interface CreateJobInput {
+  name: string
+  source_directory_id: string
+  source_directory_path: string
+  target_directory_id: string
+  target_directory_path: string
+  config: OrganizeConfig
+}
+
+export interface OrganizeRule {
+  id: string
+  name: string
+  enabled: boolean
+  source_directory_id: string
+  source_directory_path: string
+  target_directory_id: string
+  target_directory_path: string
+  config: OrganizeConfig
+  schedule_type: RuleScheduleType
+  interval_minutes: number | null
+  cron_expression: string | null
+  timezone: string
+  next_run_at: string | null
+  last_run_at: string | null
+  last_job_id: string | null
+  last_error: string | null
+  retry_limit: number
+  retry_count: number
+  retry_backoff_minutes: number
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateOrganizeRuleInput {
+  name: string
+  enabled: boolean
+  source_directory_id: string
+  source_directory_path: string
+  target_directory_id: string
+  target_directory_path: string
+  config: OrganizeConfig
+  schedule_type: RuleScheduleType
+  interval_minutes: number | null
+  cron_expression: string | null
+  timezone: string
+  retry_limit: number
+  retry_backoff_minutes: number
+  run_immediately?: boolean
 }

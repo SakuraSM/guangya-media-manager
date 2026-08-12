@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { ErrorNotice } from '../components/ErrorNotice'
 import { LoadingScreen } from '../components/LoadingScreen'
@@ -50,8 +50,14 @@ export function ReviewPage() {
     selectedMatch?.selected_tmdb_id ??
     selectedMatch?.candidates[0]?.tmdb_id ??
     null
+  const versionGroupQuery = useQuery({
+    queryKey: ['version-group', selectedJobId, selectedMatch?.version_group_key],
+    queryFn: () => api.getVersionGroup(selectedJobId, selectedMatch!.version_group_key),
+    enabled: Boolean(selectedJobId && selectedMatch?.version_group_key),
+  })
   const refreshReviewData = async () => {
     await queryClient.invalidateQueries({ queryKey: ['matches', selectedJobId] })
+    await queryClient.invalidateQueries({ queryKey: ['version-group', selectedJobId] })
     await queryClient.invalidateQueries({ queryKey: ['job', selectedJobId] })
     await queryClient.invalidateQueries({ queryKey: ['jobs'] })
     await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
@@ -208,6 +214,41 @@ export function ReviewPage() {
       })
     },
   })
+  const versionMutation = useMutation({
+    mutationFn: (selectedMatchIds: string[]) => {
+      if (!selectedMatch?.version_group_key) throw new Error('当前记录不属于版本组')
+      return api.confirmVersionGroup(
+        selectedJobId,
+        selectedMatch.version_group_key,
+        selectedMatchIds,
+      )
+    },
+    onSuccess: async () => {
+      setActionMessage('多版本选择已确认，未选择版本将在执行时跳过。')
+      await refreshReviewData()
+    },
+  })
+  const classificationMutation = useMutation({
+    mutationFn: ({
+      category,
+      region,
+    }: {
+      category: MediaMatch['library_category']
+      region: MediaMatch['region_bucket']
+    }) => {
+      if (!selectedMatch) throw new Error('没有选中的影视分组')
+      return api.updateGroupClassification(
+        selectedJobId,
+        selectedMatch.group_key,
+        category,
+        region,
+      )
+    },
+    onSuccess: async () => {
+      setActionMessage('整组分类和目标路径已更新。')
+      await refreshReviewData()
+    },
+  })
   if (
     jobsQuery.isPending ||
     matchesQuery.isPending ||
@@ -245,6 +286,8 @@ export function ReviewPage() {
     groupUpdateMutation.error,
     sourceItemMutation.error,
     batchApproval.error,
+    versionMutation.error,
+    classificationMutation.error,
   ].find((error) => error !== null)
 
   const handleSelectMatch = (mediaMatch: MediaMatch) => {
@@ -308,7 +351,7 @@ export function ReviewPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-col gap-3 lg:h-[calc(100svh-7rem)] lg:overflow-hidden">
+    <div className="flex h-[calc(100svh-5rem)] min-h-0 flex-col gap-3 overflow-hidden lg:h-[calc(100svh-7rem)]">
       <ReviewPageHeader
         jobs={jobsQuery.data}
         job={job}
@@ -352,6 +395,14 @@ export function ReviewPage() {
         isSelectionEnabled={isJobEditable && !batchApproval.isPending}
         reviewFilter={reviewFilter}
         selectedCandidateId={effectiveCandidateId}
+        versionMatches={
+          versionGroupQuery.data ??
+          (selectedMatch?.version_group_key
+            ? matchPage.items.filter(
+                (item) => item.version_group_key === selectedMatch.version_group_key,
+              )
+            : [])
+        }
         isFetching={matchesQuery.isFetching}
         isSaving={
           updateMutation.isPending ||
@@ -359,6 +410,8 @@ export function ReviewPage() {
           manualGroupMatchMutation.isPending ||
           localGroupMatchMutation.isPending ||
           batchApproval.isPending ||
+          versionMutation.isPending ||
+          classificationMutation.isPending ||
           !isJobEditable
         }
         isRetrying={retryMutation.isPending}
@@ -375,6 +428,12 @@ export function ReviewPage() {
         onManualMatch={handleManualMatch}
         onManualGroupMatch={handleManualGroupMatch}
         onLocalGroupMatch={handleLocalGroupMatch}
+        onConfirmVersionGroup={(selectedMatchIds) =>
+          versionMutation.mutate(selectedMatchIds)
+        }
+        onUpdateClassification={(category, region) =>
+          classificationMutation.mutate({ category, region })
+        }
         onPageChange={handlePageChange}
         onPageSizeChange={handlePageSizeChange}
       />

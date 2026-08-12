@@ -1,7 +1,9 @@
+import { useState } from 'react'
 import {
   ArrowRight,
   Bot,
   CheckCircle2,
+  ChevronDown,
   CircleSlash,
   FolderInput,
   FolderOutput,
@@ -29,6 +31,11 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import { Progress } from '@/components/ui/progress'
 import {
   Select,
@@ -38,6 +45,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { cn } from '@/lib/utils'
 
 const NON_CANCELABLE_STATUSES: ReadonlySet<JobStatus> = new Set([
   JOB_STATUS.COMPLETED,
@@ -87,6 +95,7 @@ export function ReviewCommandBar({
   onCancel,
   onStartAiReview,
 }: ReviewCommandBarProps) {
+  const [isMobileSummaryOpen, setIsMobileSummaryOpen] = useState(false)
   const canCancel = !NON_CANCELABLE_STATUSES.has(job.status)
   const isRetryingBatch =
     job.status === JOB_STATUS.PARTIAL_FAILED &&
@@ -102,9 +111,9 @@ export function ReviewCommandBar({
     : isApprovingGroup
 
   return (
-    <Card>
-      <CardContent className="grid gap-4 md:grid-cols-[minmax(15rem,0.9fr)_minmax(20rem,1.1fr)] xl:grid-cols-[minmax(16rem,0.8fr)_minmax(22rem,1.4fr)_minmax(18rem,1fr)]">
-        <div className="flex min-w-0 flex-col gap-3">
+    <Card className="gap-0 py-0">
+      <CardContent className="grid gap-3 p-3 sm:p-4 md:grid-cols-[minmax(15rem,0.9fr)_minmax(20rem,1.1fr)] xl:grid-cols-[minmax(16rem,0.8fr)_minmax(22rem,1.4fr)_minmax(18rem,1fr)]">
+        <div className="flex min-w-0 flex-col gap-2 sm:gap-3">
           <div className="flex items-center gap-2">
             <Select value={selectedJobId} onValueChange={onJobChange}>
               <SelectTrigger className="min-w-0 flex-1" aria-label="选择审核任务">
@@ -122,7 +131,7 @@ export function ReviewCommandBar({
             </Select>
             <StatusBadge status={job.status} />
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="hidden flex-wrap gap-2 sm:flex">
             <Badge variant="outline" className={job.auto_approve_enabled ? 'text-success' : undefined}>
               <Sparkles aria-hidden="true" />
               TMDB 自动审批 {job.auto_approve_enabled ? '开启' : '关闭'}
@@ -145,7 +154,7 @@ export function ReviewCommandBar({
           </div>
         </div>
 
-        <div className="flex min-w-0 flex-col gap-3">
+        <div className="hidden min-w-0 flex-col gap-3 sm:flex">
           <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 rounded-lg border bg-muted/20 p-3">
             <RoutePath icon={FolderInput} label="源目录" path={job.source_directory_path} />
             <ArrowRight className="text-muted-foreground" aria-hidden="true" />
@@ -163,12 +172,48 @@ export function ReviewCommandBar({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-end gap-2 self-center md:col-span-2 xl:col-span-1">
+        <Collapsible
+          open={isMobileSummaryOpen}
+          onOpenChange={setIsMobileSummaryOpen}
+          className="sm:hidden"
+        >
+          <CollapsibleTrigger asChild>
+            <Button variant="ghost" type="button" className="w-full justify-between px-2">
+              <span>任务路径与自动化设置</span>
+              <ChevronDown
+                className={cn('transition-transform', isMobileSummaryOpen && 'rotate-180')}
+                aria-hidden="true"
+              />
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="mt-2 space-y-3 rounded-lg border bg-muted/20 p-3">
+              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
+                <RoutePath icon={FolderInput} label="源目录" path={job.source_directory_path} />
+                <ArrowRight className="text-muted-foreground" aria-hidden="true" />
+                <RoutePath icon={FolderOutput} label="目标目录" path={job.target_directory_path} />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="outline" className={job.auto_approve_enabled ? 'text-success' : undefined}>
+                  <Sparkles aria-hidden="true" />
+                  自动审批 {job.auto_approve_enabled ? '开启' : '关闭'}
+                </Badge>
+                <Badge variant="outline" className={job.auto_execute_after_approval ? 'text-success' : undefined}>
+                  <Bot aria-hidden="true" />
+                  自动整理 {job.auto_execute_after_approval ? '开启' : '关闭'}
+                </Badge>
+              </div>
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+
+        <div className="grid grid-cols-2 items-center gap-2 self-center sm:flex sm:flex-wrap sm:justify-end md:col-span-2 xl:col-span-1">
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button
                 variant="outline"
                 type="button"
+                className="w-full sm:w-auto"
                 disabled={!canStartAiReview || isStartingAiReview}
               >
                 <Bot data-icon="inline-start" aria-hidden="true" />
@@ -202,6 +247,7 @@ export function ReviewCommandBar({
           <Button
             variant="outline"
             type="button"
+            className="w-full sm:w-auto"
             disabled={!canApproveContext || isApprovingContext}
             onClick={isSelectionApproval ? onApproveSelection : onApproveGroup}
           >
@@ -216,7 +262,7 @@ export function ReviewCommandBar({
                 ? `批准已选（${selectedCount}）`
                 : '批准当前整组'}
           </Button>
-          <Button type="button" disabled={!canExecute || isExecuting} onClick={onExecute}>
+          <Button className="w-full sm:w-auto" type="button" disabled={!canExecute || isExecuting} onClick={onExecute}>
             <Play data-icon="inline-start" aria-hidden="true" />
             {isExecuting
               ? '正在提交整批任务'
@@ -229,6 +275,7 @@ export function ReviewCommandBar({
               <Button
                 variant="ghost"
                 type="button"
+                className="w-full sm:w-auto"
                 disabled={!canCancel || isCancelling || job.is_cancel_requested}
               >
                 <StopCircle data-icon="inline-start" aria-hidden="true" />
