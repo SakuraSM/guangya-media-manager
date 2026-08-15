@@ -15,29 +15,51 @@ SPEC.loader.exec_module(CHECK_SECRETS)
 class GithubMergeMetadataTests(unittest.TestCase):
     def test_accepts_github_generated_merge(self) -> None:
         self.assertTrue(
-            CHECK_SECRETS.is_github_generated_merge(
-                "parent-one parent-two", "GitHub", "noreply@github.com"
+            CHECK_SECRETS.is_github_generated_pull_request_commit(
+                "parent-one parent-two",
+                "GitHub",
+                "noreply@github.com",
+                "Merge pull request #15",
             )
         )
 
-    def test_rejects_regular_commit(self) -> None:
+    def test_accepts_github_generated_squash_commit(self) -> None:
+        self.assertTrue(
+            CHECK_SECRETS.is_github_generated_pull_request_commit(
+                "parent-one",
+                "GitHub",
+                "noreply@github.com",
+                "Improve review state (#15)",
+            )
+        )
+
+    def test_rejects_regular_github_commit_without_pull_request_suffix(self) -> None:
         self.assertFalse(
-            CHECK_SECRETS.is_github_generated_merge(
-                "parent-one", "GitHub", "noreply@github.com"
+            CHECK_SECRETS.is_github_generated_pull_request_commit(
+                "parent-one",
+                "GitHub",
+                "noreply@github.com",
+                "Update README",
             )
         )
 
     def test_rejects_merge_from_regular_committer(self) -> None:
         self.assertFalse(
-            CHECK_SECRETS.is_github_generated_merge(
-                "parent-one parent-two", "Developer", "developer@example.com"
+            CHECK_SECRETS.is_github_generated_pull_request_commit(
+                "parent-one parent-two",
+                "Developer",
+                "developer@example.com",
+                "Merge pull request #15",
             )
         )
 
     def test_rejects_spoofed_github_email(self) -> None:
         self.assertFalse(
-            CHECK_SECRETS.is_github_generated_merge(
-                "parent-one parent-two", "Developer", "noreply@github.com"
+            CHECK_SECRETS.is_github_generated_pull_request_commit(
+                "parent-one parent-two",
+                "Developer",
+                "noreply@github.com",
+                "Merge pull request #15",
             )
         )
 

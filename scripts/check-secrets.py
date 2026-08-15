@@ -94,14 +94,20 @@ def is_github_noreply(email: str) -> bool:
     )
 
 
-def is_github_generated_merge(
-    parent_hashes: str, committer_name: str, committer_email: str
+def is_github_generated_pull_request_commit(
+    parent_hashes: str,
+    committer_name: str,
+    committer_email: str,
+    subject: str,
 ) -> bool:
-    """Return whether GitHub synthesized a merge from already-scanned commits."""
+    """Return whether GitHub synthesized a merge or squash commit for a PR."""
     return (
-        len(parent_hashes.split()) > 1
-        and committer_name.casefold() == "github"
+        committer_name.casefold() == "github"
         and is_github_noreply(committer_email)
+        and (
+            len(parent_hashes.split()) > 1
+            or re.search(r"\s\(#\d+\)$", subject) is not None
+        )
     )
 
 
@@ -148,17 +154,25 @@ def scan_commit_emails() -> list[str]:
     findings: list[str] = []
     rows = git(
         "log",
-        "--format=%H%x09%P%x09%ae%x09%cn%x09%ce",
+        "--format=%H%x00%P%x00%ae%x00%cn%x00%ce%x00%s",
         "--branches",
         "--tags",
         "--remotes=origin",
     ).decode().splitlines()
     for row in rows:
-        revision, parent_hashes, author_email, committer_name, committer_email = row.split(
-            "\t"
-        )
-        github_generated_merge = is_github_generated_merge(
-            parent_hashes, committer_name, committer_email
+        (
+            revision,
+            parent_hashes,
+            author_email,
+            committer_name,
+            committer_email,
+            subject,
+        ) = row.split("\0", 5)
+        github_generated_pull_request_commit = is_github_generated_pull_request_commit(
+            parent_hashes,
+            committer_name,
+            committer_email,
+            subject,
         )
         for role, email in (("author", author_email), ("committer", committer_email)):
             email_fingerprint = fingerprint(email.encode())
@@ -166,9 +180,11 @@ def scan_commit_emails() -> list[str]:
             if (
                 email
                 and not is_github_noreply(email)
-                # GitHub's synthetic merge metadata can repeat the account's public
-                # author email. Its parent commits are still scanned individually.
-                and not (role == "author" and github_generated_merge)
+                # GitHub's synthetic PR metadata can repeat the account's public
+                # author email. Tracked content is still scanned blob by blob.
+                and not (
+                    role == "author" and github_generated_pull_request_commit
+                )
                 and acknowledged_finding not in ACKNOWLEDGED_PUBLIC_COMMIT_EMAILS
             ):
                 findings.append(
