@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 from app.domain import JobStatus, MatchDecision, ProgressStage, ProgressState
 from app.models import AuditEvent, MediaMatch, OrganizeJob, SourceItem
 from app.schemas import MatchCandidate as MatchCandidateSchema
+from app.services.match_review_state import is_match_approved, is_match_review_pending
 from app.services.media_parser import ParsedMediaName, parse_media_filename
 from app.services.metadata import (
     AiRecognitionService,
@@ -372,13 +373,8 @@ async def _refresh_job_readiness(session: AsyncSession, job: OrganizeJob) -> Non
             )
         ).all()
     )
-    job.review_items = sum(
-        media_match.decision in AI_REVIEW_PENDING_DECISIONS for media_match in matches
-    )
-    job.approved_items = sum(
-        media_match.decision in {MatchDecision.AUTO_APPROVED, MatchDecision.APPROVED}
-        for media_match in matches
-    )
+    job.review_items = sum(is_match_review_pending(media_match) for media_match in matches)
+    job.approved_items = sum(is_match_approved(media_match) for media_match in matches)
     job.failed_items = 0
     job.status = JobStatus.READY if job.review_items == 0 else JobStatus.REVIEW_REQUIRED
 

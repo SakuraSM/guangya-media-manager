@@ -35,6 +35,7 @@ from app.schemas import (
     UpdateMatchRequest,
 )
 from app.schemas import MatchCandidate as MatchCandidateSchema
+from app.services.match_review_state import is_match_approved, is_match_review_pending
 from app.services.media_classification import apply_output_layout
 from app.services.media_parser import (
     ParsedMediaName,
@@ -69,6 +70,7 @@ from app.services.organizer_support import (
     validate_candidate,
 )
 from app.services.progress_events import record_job_progress
+from app.services.title_preprocessor import apply_title_extraction
 
 __all__ = ["OrganizerError", "OrganizerService"]
 
@@ -327,6 +329,7 @@ class OrganizerService:
         )
         if not matches:
             raise OrganizerError("Media group not found")
+        matches = _unexecuted_matches(job, matches)
         for media_match in matches:
             media_match.library_category = category
             media_match.region_bucket = region
@@ -385,6 +388,7 @@ class OrganizerService:
         )
         if not matches:
             raise OrganizerError("Version group not found")
+        matches = _unexecuted_matches(job, matches)
         selected = set(selected_match_ids)
         available = {media_match.id for media_match in matches}
         if not selected <= available:
@@ -442,6 +446,7 @@ class OrganizerService:
         )
         if len(matches) != len(match_ids):
             raise OrganizerError("部分匹配记录不存在")
+        _ensure_matches_unexecuted(job, matches)
         matches_by_id = {media_match.id: media_match for media_match in matches}
         approval_candidates: list[tuple[MediaMatch, dict[str, object]]] = []
         for item in request.items:
@@ -500,6 +505,7 @@ class OrganizerService:
         )
         if not matches:
             raise OrganizerError("Media group not found")
+        matches = _unexecuted_matches(job, matches)
 
         resolved_tmdb_id = request.resolved_tmdb_id()
         if request.provider not in {None, MetadataSource.TMDB}:
@@ -553,10 +559,10 @@ class OrganizerService:
             match_id=match_id,
         )
         parent_path = str(PurePosixPath(media_match.source_item.source_path).parent)
-        parsed = parse_media_filename(
+        parsed = _parse_media_for_job(
+            job,
             media_match.source_item.filename,
             parent_path=parent_path,
-            source_root=job.source_directory_path,
         )
         if media_match.episode_numbers:
             parsed = replace(
@@ -649,13 +655,14 @@ class OrganizerService:
         )
         if not matches:
             raise OrganizerError("Media group not found")
+        matches = _unexecuted_matches(job, matches)
         representative = matches[0]
-        representative_parsed = parse_media_filename(
+        representative_parsed = _parse_media_for_job(
+            job,
             representative.source_item.filename,
             parent_path=str(
                 PurePosixPath(representative.source_item.source_path).parent
             ),
-            source_root=job.source_directory_path,
         )
         resolution = await self._metadata_resolver.resolve(
             MetadataResolutionRequest(
@@ -696,12 +703,12 @@ class OrganizerService:
             else None
         )
         for media_match in matches:
-            parsed = parse_media_filename(
+            parsed = _parse_media_for_job(
+                job,
                 media_match.source_item.filename,
                 parent_path=str(
                     PurePosixPath(media_match.source_item.source_path).parent
                 ),
-                source_root=job.source_directory_path,
             )
             if media_match.episode_numbers:
                 parsed = replace(
@@ -864,6 +871,7 @@ class OrganizerService:
         )
         if not matches:
             raise OrganizerError("Media group not found")
+        matches = _unexecuted_matches(job, matches)
 
         candidate = await self._resolve_manual_candidate(request)
         entity = await persist_metadata_candidate(session, candidate)
@@ -1007,6 +1015,7 @@ class OrganizerService:
         )
         if not matches:
             raise OrganizerError("Media group not found")
+        matches = _unexecuted_matches(job, matches)
         entity = await persist_local_metadata_entity(
             session,
             title=request.title,
@@ -1256,6 +1265,7 @@ class OrganizerService:
         media_match = await session.scalar(statement)
         if media_match is None:
             raise OrganizerError("Match not found")
+        _ensure_matches_unexecuted(job, [media_match])
         return media_match, job
 
     async def _refresh_job_readiness(self, session: AsyncSession, job_id: str) -> None:
@@ -1265,29 +1275,60 @@ class OrganizerService:
             )
         ).all()
         job = await load_job(session, job_id)
-        review_items = sum(
-            match.decision == MatchDecision.REVIEW
-            or match.version_recommendation == "PENDING"
-            for match in matches
-        )
-        unresolved_items = sum(
-            match.decision == MatchDecision.UNRESOLVED
-            and match.version_recommendation != "PENDING"
-            for match in matches
-        )
-        approved_items = sum(
-            match.decision in {MatchDecision.AUTO_APPROVED, MatchDecision.APPROVED}
-            and match.version_recommendation != "PENDING"
-            for match in matches
-        )
-        job.review_items = review_items + unresolved_items
-        job.approved_items = approved_items
+        job.review_items = sum(is_match_review_pending(match) for match in matches)
+        job.approved_items = sum(is_match_approved(match) for match in matches)
         job.failed_items = 0
-        job.status = (
-            JobStatus.READY if review_items + unresolved_items == 0 else JobStatus.REVIEW_REQUIRED
-        )
+        job.status = JobStatus.READY if job.review_items == 0 else JobStatus.REVIEW_REQUIRED
         job.current_stage = "可以执行" if job.status == JobStatus.READY else "等待审核"
         await session.commit()
+
+
+def _parse_media_for_job(
+    job: OrganizeJob,
+    filename: str,
+    *,
+    parent_path: str,
+) -> ParsedMediaName:
+    parsed = parse_media_filename(
+        filename,
+        parent_path=parent_path,
+        source_root=job.source_directory_path,
+    )
+    pattern = job.config.get("title_extraction_regex", "")
+    return apply_title_extraction(
+        parsed,
+        filename,
+        pattern if isinstance(pattern, str) else "",
+    )
+
+
+def _executed_match_ids(job: OrganizeJob) -> set[str]:
+    config = job.config if isinstance(job.config, dict) else {}
+    value = config.get("_executed_match_ids", [])
+    if not isinstance(value, list):
+        return set()
+    return {item for item in value if isinstance(item, str)}
+
+
+def _ensure_matches_unexecuted(
+    job: OrganizeJob,
+    matches: list[MediaMatch],
+) -> None:
+    if _executed_match_ids(job).intersection(media_match.id for media_match in matches):
+        raise OrganizerError("已整理发布的记录不能再次修改")
+
+
+def _unexecuted_matches(
+    job: OrganizeJob,
+    matches: list[MediaMatch],
+) -> list[MediaMatch]:
+    executed_ids = _executed_match_ids(job)
+    editable_matches = [
+        media_match for media_match in matches if media_match.id not in executed_ids
+    ]
+    if not editable_matches:
+        raise OrganizerError("该分组内容均已整理发布，不能再次修改")
+    return editable_matches
 
 
 def _target_path_for_candidate(media_match: MediaMatch, candidate: MatchCandidateSchema) -> str:

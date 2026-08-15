@@ -53,7 +53,7 @@ interface ReviewWorkspaceProps {
   onTogglePageSelection: () => void
   onReviewFilterChange: (value: ReviewFilter) => void
   onSelectCandidate: (candidateId: number) => void
-  onApprove: () => void
+  onApproveCandidate: (candidateId: number) => void
   onToggleIgnore: () => void
   onRetry: () => void
   onRetryGroup: () => void
@@ -117,7 +117,7 @@ export function ReviewWorkspace(props: ReviewWorkspaceProps) {
       isRetrying={props.isRetrying}
       isRetryingGroup={props.isRetryingGroup}
       onSelectCandidate={props.onSelectCandidate}
-      onApprove={props.onApprove}
+      onApproveCandidate={props.onApproveCandidate}
       onToggleIgnore={props.onToggleIgnore}
       onRetry={props.onRetry}
       onRetryGroup={props.onRetryGroup}

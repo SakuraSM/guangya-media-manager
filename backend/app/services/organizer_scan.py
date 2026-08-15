@@ -82,6 +82,7 @@ from app.services.source_classifier import (
     ClassificationResult,
     classify_source_node,
 )
+from app.services.title_preprocessor import apply_title_extraction
 
 SCAN_PROGRESS = 0.12
 IDENTIFY_PROGRESS = 0.36
@@ -111,6 +112,10 @@ class ScanWorkflow:
     async def run(self, job_id: str) -> None:
         async with self._session_factory() as session:
             job = await load_job(session, job_id)
+            if job.executed_items:
+                raise OrganizerError(
+                    "该任务已有内容发布，不能重新扫描；剩余内容可继续审核和整理"
+                )
             if job.status not in {
                 JobStatus.DRAFT,
                 JobStatus.FAILED,
@@ -532,10 +537,10 @@ class ScanWorkflow:
         )
         media_by_signature = {
             _media_signature(
-                parse_media_filename(
+                _parse_media_for_job(
+                    job,
                     item.filename,
                     parent_path=str(PurePosixPath(item.source_path).parent),
-                    source_root=job.source_directory_path,
                 )
             ): item
             for item in media_items
@@ -543,10 +548,10 @@ class ScanWorkflow:
         associated_count = 0
         for subtitle_node in subtitle_nodes:
             signature = _media_signature(
-                parse_media_filename(
+                _parse_media_for_job(
+                    job,
                     subtitle_node.name,
                     parent_path=str(PurePosixPath(subtitle_node.path).parent),
-                    source_root=job.source_directory_path,
                 )
             )
             media_item = media_by_signature.get(signature)
@@ -1107,6 +1112,25 @@ def _media_signature(parsed: ParsedMediaName) -> tuple[object, ...]:
         parsed.year,
         parsed.season_number,
         parsed.episode_numbers,
+    )
+
+
+def _parse_media_for_job(
+    job: OrganizeJob,
+    filename: str,
+    *,
+    parent_path: str,
+) -> ParsedMediaName:
+    parsed = parse_media_filename(
+        filename,
+        parent_path=parent_path,
+        source_root=job.source_directory_path,
+    )
+    pattern = job.config.get("title_extraction_regex", "")
+    return apply_title_extraction(
+        parsed,
+        filename,
+        pattern if isinstance(pattern, str) else "",
     )
 
 

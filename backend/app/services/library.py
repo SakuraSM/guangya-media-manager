@@ -2,11 +2,13 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import PurePosixPath
 
-from sqlalchemy import select
+from sqlalchemy import exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.selectable import Exists
 
-from app.domain import JobStatus, MatchDecision, MediaType
+from app.domain import JobStatus, MatchDecision, MediaType, OperationStatus, OperationType
 from app.models import (
+    FileOperation,
     MediaEntity,
     MediaEpisode,
     MediaMatch,
@@ -28,13 +30,17 @@ class SeasonDescriptor:
 
 
 async def load_library_items(session: AsyncSession) -> list[LibraryItem]:
+    published_copy = _published_copy_exists()
     statement = (
         select(MediaMatch, MediaEntity, OrganizeJob)
         .join(MediaEntity, MediaEntity.id == MediaMatch.media_entity_id)
         .join(SourceItem, SourceItem.id == MediaMatch.source_item_id)
         .join(OrganizeJob, OrganizeJob.id == SourceItem.job_id)
         .where(
-            OrganizeJob.status.in_([JobStatus.COMPLETED, JobStatus.PARTIAL_FAILED]),
+            or_(
+                OrganizeJob.status.in_([JobStatus.COMPLETED, JobStatus.PARTIAL_FAILED]),
+                published_copy,
+            ),
             MediaMatch.decision.in_([MatchDecision.AUTO_APPROVED, MatchDecision.APPROVED]),
         )
         .order_by(OrganizeJob.updated_at.desc())
@@ -87,6 +93,7 @@ async def load_library_detail(
     session: AsyncSession,
     entity_id: str,
 ) -> LibraryItemDetail | None:
+    published_copy = _published_copy_exists()
     statement = (
         select(MediaMatch, MediaEntity, SourceItem, OrganizeJob)
         .join(MediaEntity, MediaEntity.id == MediaMatch.media_entity_id)
@@ -94,7 +101,10 @@ async def load_library_detail(
         .join(OrganizeJob, OrganizeJob.id == SourceItem.job_id)
         .where(
             MediaEntity.id == entity_id,
-            OrganizeJob.status.in_([JobStatus.COMPLETED, JobStatus.PARTIAL_FAILED]),
+            or_(
+                OrganizeJob.status.in_([JobStatus.COMPLETED, JobStatus.PARTIAL_FAILED]),
+                published_copy,
+            ),
             MediaMatch.decision.in_([MatchDecision.AUTO_APPROVED, MatchDecision.APPROVED]),
         )
         .order_by(OrganizeJob.updated_at.desc())
@@ -155,6 +165,17 @@ async def load_library_detail(
         overview=entity.overview,
         backdrop_url=entity.backdrop_url,
         seasons=seasons,
+    )
+
+
+def _published_copy_exists() -> Exists:
+    return exists(
+        select(FileOperation.id).where(
+            FileOperation.job_id == OrganizeJob.id,
+            FileOperation.source_item_id == SourceItem.id,
+            FileOperation.operation_type == OperationType.MOVE,
+            FileOperation.status == OperationStatus.COMPLETED,
+        )
     )
 
 

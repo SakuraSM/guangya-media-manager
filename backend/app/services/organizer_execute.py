@@ -44,14 +44,17 @@ class ExecutionWorkflow:
     ) -> None:
         self._session_factory = session_factory
         self._provider = provider
-        self._layout = CloudLayout(provider)
         self._asset_scraper = AssetScraper(provider, tmdb_service)
         self._copy_executor = CopyExecutor(provider)
 
     async def run(self, job_id: str) -> None:
         async with self._session_factory() as session:
             job = await load_job(session, job_id)
-            if job.status not in {JobStatus.READY, JobStatus.PARTIAL_FAILED}:
+            if job.status not in {
+                JobStatus.REVIEW_REQUIRED,
+                JobStatus.READY,
+                JobStatus.PARTIAL_FAILED,
+            }:
                 raise OrganizerError(f"Job {job_id} is not ready")
             if job.status == JobStatus.PARTIAL_FAILED:
                 incomplete_copy_id = await session.scalar(
@@ -63,16 +66,17 @@ class ExecutionWorkflow:
                 )
                 if incomplete_copy_id is None:
                     raise OrganizerError("当前部分失败任务没有可重试的复制文件")
-            matches = await self._load_executable_matches(session, job_id)
+            matches = await self._load_executable_matches(session, job)
             if not matches:
-                raise OrganizerError("No approved media matches")
-            await self._begin_copy(session, job, len(matches))
+                raise OrganizerError("没有尚未整理的已审批内容")
+            await self._begin_copy(session, job, matches)
             try:
                 if await _is_cancel_requested(session, job.id):
                     await self._cancel_job(session, job)
                     return
-                staging_directory = await self._layout.prepare_staging(job)
-                media_directories = await self._layout.prepare_media_directories(
+                layout = CloudLayout(self._provider)
+                staging_directory = await layout.prepare_staging(job)
+                media_directories = await layout.prepare_media_directories(
                     staging_directory, matches
                 )
                 copy_plan = await self._build_copy_plan(
@@ -111,11 +115,24 @@ class ExecutionWorkflow:
                 if await _is_cancel_requested(session, job.id):
                     await self._cancel_job(session, job)
                     return
-                await self._finalize_job(session, job, staging_directory, warning_count)
+                await self._finalize_job(
+                    session,
+                    job,
+                    staging_directory,
+                    warning_count,
+                    layout,
+                    matches,
+                )
             except (OrganizerError, RuntimeError) as error:
                 await fail_job(session, job, "执行整理失败", error, partial=True)
 
-    async def _begin_copy(self, session: AsyncSession, job: OrganizeJob, item_count: int) -> None:
+    async def _begin_copy(
+        self,
+        session: AsyncSession,
+        job: OrganizeJob,
+        matches: list[MediaMatch],
+    ) -> None:
+        item_count = len(matches)
         job.status = JobStatus.COPYING
         job.progress = COPY_PROGRESS_START
         job.current_stage = "准备整批执行"
@@ -123,6 +140,10 @@ class ExecutionWorkflow:
         job.failed_items = 0
         job.config = {
             key: value for key, value in job.config.items() if key != "_auto_execute_queued"
+        }
+        job.config = {
+            **job.config,
+            "_active_execution_match_ids": [media_match.id for media_match in matches],
         }
         record_job_progress(
             session,
@@ -293,6 +314,8 @@ class ExecutionWorkflow:
         job: OrganizeJob,
         staging_directory: CloudNode,
         warning_count: int,
+        layout: CloudLayout,
+        matches: list[MediaMatch],
     ) -> None:
         job.status = JobStatus.FINALIZING
         job.progress = FINALIZE_PROGRESS
@@ -305,7 +328,7 @@ class ExecutionWorkflow:
             message=job.current_stage,
         )
         await session.commit()
-        commit_result = await self._layout.commit_staging(
+        commit_result = await layout.commit_staging(
             staging_directory,
             job.target_directory_id,
             job.target_directory_path,
@@ -322,29 +345,79 @@ class ExecutionWorkflow:
                     idempotency_key=make_idempotency_key("move", job.id, move.target_path),
                 )
             )
+        for media_match in matches:
+            session.add(
+                FileOperation(
+                    job_id=job.id,
+                    source_item_id=media_match.source_item_id,
+                    operation_type=OperationType.MOVE,
+                    source_path=media_match.source_item.source_path,
+                    target_path=media_match.target_path,
+                    status=OperationStatus.COMPLETED,
+                    idempotency_key=make_idempotency_key(
+                        "publish",
+                        job.id,
+                        media_match.id,
+                    ),
+                )
+            )
+        active_match_ids = _config_string_set(job.config, "_active_execution_match_ids")
+        executed_match_ids = _config_string_set(job.config, "_executed_match_ids")
+        executed_match_ids.update(active_match_ids)
+        job.config = {
+            key: value
+            for key, value in job.config.items()
+            if key != "_active_execution_match_ids"
+        }
+        job.config = {**job.config, "_executed_match_ids": sorted(executed_match_ids)}
         has_warnings = bool(commit_result.conflicts or warning_count)
-        job.failed_items = 0
-        job.error_message = None
-        job.status = JobStatus.PARTIAL_FAILED if has_warnings else JobStatus.COMPLETED
-        job.progress = 1
-        job.current_stage = "整理完成，存在待处理项" if has_warnings else "整理完成"
+        has_pending_reviews = job.review_items > 0
+        job.failed_items = warning_count + len(commit_result.conflicts)
+        job.error_message = (
+            "本批次存在刮削警告或目标冲突，请查看执行记录"
+            if has_warnings
+            else None
+        )
+        if has_pending_reviews:
+            job.status = JobStatus.REVIEW_REQUIRED
+            job.progress = len(executed_match_ids) / job.total_items if job.total_items else 1
+            job.current_stage = (
+                f"已整理 {len(active_match_ids)} 条，剩余 {job.review_items} 条继续审核"
+            )
+        else:
+            job.status = JobStatus.PARTIAL_FAILED if has_warnings else JobStatus.COMPLETED
+            job.progress = 1
+            job.current_stage = "整理完成，存在待处理项" if has_warnings else "整理完成"
+        final_state = (
+            ProgressState.WAITING_REVIEW
+            if has_pending_reviews
+            else ProgressState.FAILED
+            if has_warnings
+            else ProgressState.COMPLETED
+        )
         record_job_progress(
             session,
             job,
             stage=ProgressStage.FINALIZE,
-            state=(ProgressState.FAILED if has_warnings else ProgressState.COMPLETED),
-            completed=job.approved_items,
-            total=job.approved_items,
-            succeeded=job.approved_items,
+            state=final_state,
+            completed=len(active_match_ids),
+            total=len(active_match_ids),
+            succeeded=len(active_match_ids),
             failed=warning_count + len(commit_result.conflicts),
             message=job.current_stage,
         )
         session.add(
             AuditEvent(
                 job_id=job.id,
-                event_type="JOB_COMPLETED",
+                event_type=(
+                    "APPROVED_BATCH_COMPLETED"
+                    if has_pending_reviews
+                    else "JOB_COMPLETED"
+                ),
                 message=(
-                    "整理任务已完成，部分冲突保留在暂存目录"
+                    job.current_stage
+                    if has_pending_reviews
+                    else "整理任务已完成，部分冲突保留在暂存目录"
                     if commit_result.conflicts
                     else "整理任务已完成，源目录未修改"
                 ),
@@ -379,8 +452,10 @@ class ExecutionWorkflow:
         await session.commit()
 
     async def _load_executable_matches(
-        self, session: AsyncSession, job_id: str
+        self, session: AsyncSession, job: OrganizeJob
     ) -> list[MediaMatch]:
+        executed_match_ids = _config_string_set(job.config, "_executed_match_ids")
+        active_match_ids = _config_string_set(job.config, "_active_execution_match_ids")
         statement = (
             select(MediaMatch)
             .join(SourceItem)
@@ -389,12 +464,23 @@ class ExecutionWorkflow:
                 selectinload(MediaMatch.media_entity),
             )
             .where(
-                SourceItem.job_id == job_id,
+                SourceItem.job_id == job.id,
                 MediaMatch.decision.in_([MatchDecision.AUTO_APPROVED, MatchDecision.APPROVED]),
                 MediaMatch.version_recommendation != "PENDING",
             )
         )
+        if job.status == JobStatus.PARTIAL_FAILED and active_match_ids:
+            statement = statement.where(MediaMatch.id.in_(active_match_ids))
+        elif executed_match_ids:
+            statement = statement.where(MediaMatch.id.not_in(executed_match_ids))
         return list((await session.scalars(statement)).all())
+
+
+def _config_string_set(config: dict[str, object], key: str) -> set[str]:
+    value = config.get(key, [])
+    if not isinstance(value, list):
+        return set()
+    return {item for item in value if isinstance(item, str)}
 
 
 async def _is_cancel_requested(session: AsyncSession, job_id: str) -> bool:

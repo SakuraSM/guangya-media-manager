@@ -4,9 +4,11 @@ import pytest
 from app.providers.guangya import (
     GuangyaProvider,
     GuangyaProviderError,
+    GuangyaRetryPolicy,
     _to_cloud_node,
     _validate_download_url,
 )
+from app.providers.request_guard import RequestKind
 
 
 def test_res_type_two_is_mapped_as_directory() -> None:
@@ -36,6 +38,65 @@ async def test_refresh_converts_client_failure_to_provider_error() -> None:
 
     with pytest.raises(GuangyaProviderError, match="token refresh failed"):
         await provider.refresh_tokens("expired-refresh-token")
+
+
+class RecordingGuard:
+    def __init__(self) -> None:
+        self.kinds: list[RequestKind] = []
+
+    async def wait(self, kind: RequestKind) -> None:
+        self.kinds.append(kind)
+
+    async def aclose(self) -> None:
+        return None
+
+
+class RateLimitedListClient:
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def fs_list(self, payload: object) -> object:
+        self.call_count += 1
+        if self.call_count == 1:
+            return {"code": 429, "message": "请求过于频繁"}
+        return {"data": {"list": []}}
+
+
+async def test_list_directory_retries_rate_limit_response() -> None:
+    provider = object.__new__(GuangyaProvider)
+    client = RateLimitedListClient()
+    guard = RecordingGuard()
+    provider._client = client  # type: ignore[assignment]
+    provider._request_guard = guard
+    provider._retry_policy = GuangyaRetryPolicy(1, 0, 0, 0)
+
+    nodes = await provider.list_directory("root", "/光鸭云盘")
+
+    assert nodes == []
+    assert client.call_count == 2
+    assert guard.kinds == [RequestKind.READ, RequestKind.READ]
+
+
+class TimeoutCopyClient:
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def fs_copy(self, payload: object) -> object:
+        self.call_count += 1
+        raise TimeoutError("request timed out")
+
+
+async def test_ambiguous_write_timeout_is_not_retried() -> None:
+    provider = object.__new__(GuangyaProvider)
+    client = TimeoutCopyClient()
+    provider._client = client  # type: ignore[assignment]
+    provider._request_guard = RecordingGuard()
+    provider._retry_policy = GuangyaRetryPolicy(3, 0, 0, 0)
+
+    with pytest.raises(GuangyaProviderError, match="copy files request failed"):
+        await provider.copy_items(["file-1"], "target")
+
+    assert client.call_count == 1
 
 
 @pytest.mark.parametrize(

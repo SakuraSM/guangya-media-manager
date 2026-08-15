@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import {
-  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -43,7 +42,6 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { Field, FieldLabel } from '@/components/ui/field'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
@@ -64,7 +62,7 @@ interface MatchInspectorProps {
   isRetrying: boolean
   isRetryingGroup: boolean
   onSelectCandidate: (candidateId: number) => void
-  onApprove: () => void
+  onApproveCandidate: (candidateId: number) => void
   onToggleIgnore: () => void
   onRetry: () => void
   onRetryGroup: () => void
@@ -93,7 +91,7 @@ export function MatchInspector({
   isRetrying,
   isRetryingGroup,
   onSelectCandidate,
-  onApprove,
+  onApproveCandidate,
   onToggleIgnore,
   onRetry,
   onRetryGroup,
@@ -188,19 +186,20 @@ export function MatchInspector({
               <Badge variant="secondary">{mediaMatch.candidates.length} 个候选</Badge>
             </div>
             {mediaMatch.candidates.length ? (
-              <RadioGroup
-                value={selectedCandidate ? String(selectedCandidate.tmdb_id) : ''}
-                onValueChange={(value) => onSelectCandidate(Number(value))}
-                className="flex flex-col gap-2"
-              >
+              <div className="flex flex-col gap-2">
                 {mediaMatch.candidates.map((candidate) => (
                   <CandidateOption
                     candidate={candidate}
                     isSelected={candidate.tmdb_id === selectedCandidate?.tmdb_id}
                     key={candidate.tmdb_id}
+                    disabled={isSaving}
+                    onApprove={() => {
+                      onSelectCandidate(candidate.tmdb_id)
+                      onApproveCandidate(candidate.tmdb_id)
+                    }}
                   />
                 ))}
-              </RadioGroup>
+              </div>
             ) : (
               <p className="rounded-lg border border-dashed p-3 text-xs leading-relaxed text-muted-foreground">
                 自动识别没有返回候选。请直接搜索 TMDB，或重新识别整个作品分组。
@@ -310,11 +309,7 @@ export function MatchInspector({
           </Collapsible>
         </div>
       </ScrollArea>
-      <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] gap-2 border-t bg-card p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-        <Button type="button" disabled={!selectedCandidate || isSaving} onClick={onApprove}>
-          <Check data-icon="inline-start" aria-hidden="true" />
-          批准并继续
-        </Button>
+      <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] gap-2 border-t bg-card p-3">
         <Button
           variant="outline"
           type="button"
@@ -455,19 +450,25 @@ function matchOriginLabel(origin: MediaMatch['match_origin']): string {
 function CandidateOption({
   candidate,
   isSelected,
+  disabled,
+  onApprove,
 }: {
   candidate: MatchCandidate
   isSelected: boolean
+  disabled: boolean
+  onApprove: () => void
 }) {
   return (
-    <FieldLabel
-      htmlFor={`candidate-${candidate.tmdb_id}`}
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onApprove}
       className={cn(
-        'grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-2 rounded-lg border p-2',
+        'grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-lg border p-2 text-left transition-colors hover:border-primary/50 hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-50',
         isSelected && 'border-primary/40 bg-primary/5',
       )}
+      aria-label={`选择并批准 ${candidate.title}`}
     >
-      <RadioGroupItem id={`candidate-${candidate.tmdb_id}`} value={String(candidate.tmdb_id)} />
       <Poster src={candidate.poster_url} title={candidate.title} size="medium" />
       <span className="min-w-0">
         <strong className="block truncate text-xs font-medium">{candidate.title}</strong>
@@ -475,9 +476,12 @@ function CandidateOption({
           {candidate.original_title} · {candidate.year ?? '年份未知'}
         </small>
       </span>
-      <strong className="text-xs tabular-nums text-warning">
-        {formatConfidence(candidate.score)}
-      </strong>
-    </FieldLabel>
+      <span className="flex flex-col items-end gap-1">
+        <strong className="text-xs tabular-nums text-warning">
+          {formatConfidence(candidate.score)}
+        </strong>
+        <small className="text-[0.65rem] text-primary">选择即批准</small>
+      </span>
+    </button>
   )
 }

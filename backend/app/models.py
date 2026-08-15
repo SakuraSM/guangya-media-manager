@@ -114,6 +114,13 @@ class OrganizeJob(Base, TimestampMixin):
     def ai_review_running(self) -> bool:
         return bool(self.config.get("_ai_review_queued", False))
 
+    @property
+    def executed_items(self) -> int:
+        executed_match_ids = self.config.get("_executed_match_ids", [])
+        if not isinstance(executed_match_ids, list):
+            return 0
+        return len({match_id for match_id in executed_match_ids if isinstance(match_id, str)})
+
 
 class SourceItem(Base, TimestampMixin):
     __tablename__ = "source_items"

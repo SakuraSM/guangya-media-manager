@@ -28,6 +28,7 @@ export function OrganizeRuleForm({
   const [retryLimit, setRetryLimit] = useState(2)
   const [outputLayout, setOutputLayout] = useState<'STANDARD' | 'CLASSIFIED'>('STANDARD')
   const [qualityProfile, setQualityProfile] = useState<'QUALITY' | 'COMPATIBILITY' | 'SPACE_SAVING'>('QUALITY')
+  const [titleExtractionRegex, setTitleExtractionRegex] = useState('')
 
   return (
     <form
@@ -47,6 +48,7 @@ export function OrganizeRuleForm({
             auto_execute_after_approval: autoExecute,
             output_layout: outputLayout,
             quality_profile: qualityProfile,
+            title_extraction_regex: titleExtractionRegex,
           },
           schedule_type: scheduleType,
           interval_minutes: scheduleType === 'INTERVAL' ? intervalMinutes : null,
@@ -75,6 +77,19 @@ export function OrganizeRuleForm({
               <SelectItem value="CRON">Cron 表达式</SelectItem>
             </SelectContent>
           </Select>
+        </Field>
+        <Field className="sm:col-span-2">
+          <FieldLabel htmlFor="rule-title-regex">文件名标题提取正则</FieldLabel>
+          <Input
+            id="rule-title-regex"
+            value={titleExtractionRegex}
+            onChange={(event) => setTitleExtractionRegex(event.target.value)}
+            placeholder={'例如：^\\[[^\\]]+\\]\\s*(?P<title>.+?)(?:\\.S\\d+E\\d+.*)?$'}
+            spellCheck={false}
+          />
+          <FieldDescription>
+            每次扫描先按此规则提取作品名，再对整个作品分组识别。留空则关闭。
+          </FieldDescription>
         </Field>
         {scheduleType === 'INTERVAL' ? (
           <Field>

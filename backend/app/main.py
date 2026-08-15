@@ -73,6 +73,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     if scheduler_task is not None:
         scheduler_task.cancel()
         await asyncio.gather(scheduler_task, return_exceptions=True)
+    await provider.aclose()
     await engine.dispose()
 
 

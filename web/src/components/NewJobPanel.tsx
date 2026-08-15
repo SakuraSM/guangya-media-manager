@@ -196,6 +196,24 @@ export function NewJobPanel({ onCreated, onCancel }: NewJobPanelProps) {
           />
           <FieldDescription>支持每行一个 glob，也可以使用逗号分隔。</FieldDescription>
         </Field>
+        <Field className="sm:col-span-2">
+          <FieldLabel htmlFor="title-extraction-regex">文件名标题提取正则</FieldLabel>
+          <Input
+            id="title-extraction-regex"
+            value={config.title_extraction_regex}
+            onChange={(event) =>
+              setConfig((current) => ({
+                ...current,
+                title_extraction_regex: event.target.value,
+              }))
+            }
+            placeholder={'例如：^\\[[^\\]]+\\]\\s*(?P<title>.+?)(?:\\.S\\d+E\\d+.*)?$'}
+            spellCheck={false}
+          />
+          <FieldDescription>
+            仅应用于当前源目录。优先读取名为 title 的捕获组，其次读取第一个捕获组；不匹配时沿用原识别结果。
+          </FieldDescription>
+        </Field>
       </FieldGroup>
 
       <ScrapingOptions

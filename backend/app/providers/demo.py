@@ -16,6 +16,9 @@ class DemoGuangyaProvider:
         self._task_outputs: dict[str, list[str]] = {}
         self._file_contents: dict[str, bytes] = {}
 
+    async def aclose(self) -> None:
+        return None
+
     def set_tokens(self, access_token: str, refresh_token: str) -> None:
         return None
 

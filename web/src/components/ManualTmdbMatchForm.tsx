@@ -1,14 +1,12 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { ChevronDown, Search } from 'lucide-react'
+import { Check, ChevronDown, Search } from 'lucide-react'
 import { api } from '@/api/client'
-import { ManualMatchSubmitActions } from '@/components/ManualMatchSubmitActions'
 import {
   TmdbSearchResults,
   TvEpisodeMappingFields,
 } from '@/components/ManualTmdbMatchFields'
 import { type ManualMatchInput, type MatchCandidate, type MediaMatch } from '@/types'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
   Collapsible,
@@ -72,15 +70,8 @@ export function ManualTmdbMatchForm({
     episodeMapping?.episodeNumbers.join(',') ?? '',
   )
   const [isMappingEdited, setIsMappingEdited] = useState(false)
+  const [needsMappingConfirmation, setNeedsMappingConfirmation] = useState(false)
   const [validationMessage, setValidationMessage] = useState('')
-  const previewMutation = useMutation({
-    mutationFn: (input: ManualMatchInput) =>
-      api.previewManualMatch({
-        jobId,
-        matchId: mediaMatch.id,
-        match: input,
-      }),
-  })
   const searchMutation = useMutation({
     mutationFn: () =>
       api.searchTmdb({
@@ -90,8 +81,11 @@ export function ManualTmdbMatchForm({
         year: mediaMatch.parsed_year,
       }),
     onSuccess: (candidates) => {
-      setSelectedCandidate(candidates[0] ?? null)
-      previewMutation.reset()
+      setSelectedCandidate(null)
+      setNeedsMappingConfirmation(false)
+      if (candidates.length === 0) {
+        setValidationMessage('没有找到 TMDB 候选，请调整关键字后重试。')
+      }
     },
   })
   const seasonsQuery = useQuery({
@@ -135,24 +129,22 @@ export function ManualTmdbMatchForm({
     setValidationMessage('')
     searchMutation.mutate()
   }
-  const handlePreview = () => {
-    if (!currentInput) {
-      setValidationMessage(
-        mediaType === 'TV'
-          ? '请选择 TMDB 条目，并填写有效的季号和集号。'
-          : '请选择一个 TMDB 条目。',
-      )
+  const handleCandidateSelect = (candidate: MatchCandidate) => {
+    setSelectedCandidate(candidate)
+    const input = buildManualMatchInput({
+      candidate,
+      seasonNumber,
+      episodeExpression,
+    })
+    if (!input) {
+      setNeedsMappingConfirmation(true)
+      setValidationMessage('已选择该剧集，请补充有效的季号和集号后确认。')
       return
     }
+    setNeedsMappingConfirmation(false)
     setValidationMessage('')
-    previewMutation.mutate(currentInput)
-  }
-  const handleCandidateChange = (candidateId: string) => {
-    const candidate =
-      searchMutation.data?.find((item) => item.tmdb_id === Number(candidateId)) ??
-      null
-    setSelectedCandidate(candidate)
-    previewMutation.reset()
+    if (candidate.media_type === 'TV') onSubmitGroup(input)
+    else onSubmitCurrent(input)
   }
   const handleMappingChange = (
     setter: React.Dispatch<React.SetStateAction<string>>,
@@ -160,7 +152,15 @@ export function ManualTmdbMatchForm({
   ) => {
     setter(value)
     setIsMappingEdited(true)
-    previewMutation.reset()
+  }
+  const handleFallbackSubmit = () => {
+    if (!currentInput) {
+      setValidationMessage('请填写有效的季号和集号。')
+      return
+    }
+    setValidationMessage('')
+    if (currentInput.mediaType === 'TV') onSubmitGroup(currentInput)
+    else onSubmitCurrent(currentInput)
   }
 
   return (
@@ -198,8 +198,8 @@ export function ManualTmdbMatchForm({
                     if (value !== 'MOVIE' && value !== 'TV') return
                     setMediaType(value)
                     setSelectedCandidate(null)
+                    setNeedsMappingConfirmation(false)
                     searchMutation.reset()
-                    previewMutation.reset()
                   }}
                 >
                   <SelectTrigger id={`manual-type-${mediaMatch.id}`} className="w-full">
@@ -227,8 +227,8 @@ export function ManualTmdbMatchForm({
             <TmdbSearchResults
               mediaMatchId={mediaMatch.id}
               candidates={searchMutation.data}
-              selectedCandidate={selectedCandidate}
-              onCandidateChange={handleCandidateChange}
+              disabled={isSaving}
+              onCandidateSelect={handleCandidateSelect}
             />
           ) : null}
 
@@ -256,41 +256,16 @@ export function ManualTmdbMatchForm({
           ) : null}
 
           {validationMessage ? <FieldError>{validationMessage}</FieldError> : null}
-          {previewMutation.error ? (
-            <FieldError>{previewMutation.error.message}</FieldError>
+          {selectedCandidate && needsMappingConfirmation ? (
+            <Button
+              type="button"
+              disabled={isSaving || !currentInput}
+              onClick={handleFallbackSubmit}
+            >
+              <Check data-icon="inline-start" aria-hidden="true" />
+              填写季集后确认并应用到整个剧集
+            </Button>
           ) : null}
-          <Button
-            type="button"
-            variant="outline"
-            disabled={!selectedCandidate || previewMutation.isPending}
-            onClick={handlePreview}
-          >
-            生成整理路径预览
-          </Button>
-          {previewMutation.data ? (
-            <Alert>
-              <AlertTitle>整理路径预览</AlertTitle>
-              <AlertDescription className="flex flex-col gap-2">
-                <code className="break-all text-xs">
-                  {previewMutation.data.target_path}
-                </code>
-                {previewMutation.data.missing_episode_numbers.length ? (
-                  <span>
-                    TMDB 中缺少集号：
-                    {previewMutation.data.missing_episode_numbers.join('、')}，将使用基础元数据。
-                  </span>
-                ) : null}
-              </AlertDescription>
-            </Alert>
-          ) : null}
-          <ManualMatchSubmitActions
-            mediaType={selectedCandidate?.media_type ?? null}
-            input={currentInput}
-            isPreviewReady={Boolean(previewMutation.data)}
-            isSaving={isSaving}
-            onSubmitCurrent={onSubmitCurrent}
-            onSubmitGroup={onSubmitGroup}
-          />
         </div>
       </CollapsibleContent>
     </Collapsible>

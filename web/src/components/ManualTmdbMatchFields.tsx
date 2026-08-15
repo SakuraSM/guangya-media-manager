@@ -5,51 +5,49 @@ import {
 } from '@/types'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { Button } from '@/components/ui/button'
 
 interface TmdbSearchResultsProps {
   mediaMatchId: string
   candidates: MatchCandidate[]
-  selectedCandidate: MatchCandidate | null
-  onCandidateChange: (candidateId: string) => void
+  disabled: boolean
+  onCandidateSelect: (candidate: MatchCandidate) => void
 }
 
 export function TmdbSearchResults({
   mediaMatchId,
   candidates,
-  selectedCandidate,
-  onCandidateChange,
+  disabled,
+  onCandidateSelect,
 }: TmdbSearchResultsProps) {
   if (candidates.length === 0) {
     return <p className="text-xs text-muted-foreground">没有找到 TMDB 候选。</p>
   }
 
   return (
-    <RadioGroup
-      value={selectedCandidate ? String(selectedCandidate.tmdb_id) : ''}
-      onValueChange={onCandidateChange}
+    <div
       className="flex max-h-52 flex-col gap-2 overflow-y-auto"
       aria-label="TMDB 搜索结果"
     >
       {candidates.map((candidate) => (
-        <FieldLabel
+        <Button
+          type="button"
+          variant="outline"
           key={candidate.tmdb_id}
-          htmlFor={`manual-candidate-${mediaMatchId}-${candidate.tmdb_id}`}
-          className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 rounded-lg border p-2"
+          id={`manual-candidate-${mediaMatchId}-${candidate.tmdb_id}`}
+          disabled={disabled}
+          onClick={() => onCandidateSelect(candidate)}
+          className="h-auto justify-start p-2 text-left"
         >
-          <RadioGroupItem
-            id={`manual-candidate-${mediaMatchId}-${candidate.tmdb_id}`}
-            value={String(candidate.tmdb_id)}
-          />
           <span className="min-w-0">
             <strong className="block truncate text-xs">{candidate.title}</strong>
             <small className="block truncate text-muted-foreground">
-              TMDB {candidate.tmdb_id} · {candidate.year ?? '年份未知'}
+              TMDB {candidate.tmdb_id} · {candidate.year ?? '年份未知'} · 选择即确认
             </small>
           </span>
-        </FieldLabel>
+        </Button>
       ))}
-    </RadioGroup>
+    </div>
   )
 }
 

@@ -66,7 +66,7 @@ const MEDIA_MATCH: MediaMatch = {
 }
 
 describe('ManualTmdbMatchForm', () => {
-  it('offers whole-series correction and keeps a current-file action', async () => {
+  it('applies a selected TV result to the whole series immediately', async () => {
     const onSubmitCurrent = vi.fn()
     const onSubmitGroup = vi.fn()
 
@@ -90,17 +90,14 @@ describe('ManualTmdbMatchForm', () => {
 
     expect(screen.getByLabelText('TMDB 关键字')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: '搜索 TMDB' }))
-    await screen.findByText('纠正后的剧名')
-    fireEvent.click(screen.getByRole('button', { name: '生成整理路径预览' }))
-    await screen.findByText('整理路径预览')
+    fireEvent.click(await screen.findByRole('button', { name: /纠正后的剧名/ }))
 
-    fireEvent.click(screen.getByRole('button', { name: '应用到整个剧集' }))
-    expect(onSubmitGroup).toHaveBeenCalledWith(
-      expect.objectContaining({ tmdbId: 42, seasonNumber: 1, episodeNumbers: [1] }),
+    await waitFor(() =>
+      expect(onSubmitGroup).toHaveBeenCalledWith(
+        expect.objectContaining({ tmdbId: 42, seasonNumber: 1, episodeNumbers: [1] }),
+      ),
     )
-
-    fireEvent.click(screen.getByRole('button', { name: '仅应用当前文件' }))
-    await waitFor(() => expect(onSubmitCurrent).toHaveBeenCalledOnce())
+    expect(onSubmitCurrent).not.toHaveBeenCalled()
   })
 
   it('prefills season and episode from a numeric source filename', async () => {
@@ -124,7 +121,7 @@ describe('ManualTmdbMatchForm', () => {
 
     expect(screen.getByLabelText('TMDB 关键字')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: '搜索 TMDB' }))
-    await screen.findByText('纠正后的剧名')
+    fireEvent.click(await screen.findByRole('button', { name: /纠正后的剧名/ }))
 
     expect(screen.getByLabelText('季号')).toHaveValue(2)
     expect(screen.getByLabelText('集号')).toHaveValue('12')
