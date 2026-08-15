@@ -52,6 +52,7 @@ from app.schemas import (
     VersionGroupUpdateResult,
 )
 from app.security import require_admin_session
+from app.services.match_review_state import pending_review_filter, reviewed_filter
 from app.services.metadata import MetadataServiceError
 from app.services.organizer import OrganizerError
 from app.services.organizer_support import candidate_to_dict
@@ -118,6 +119,11 @@ async def scan_job(
     services: Services,
 ) -> OrganizeJob:
     job = await _get_job_or_404(session, job_id)
+    if job.executed_items:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="该任务已有内容发布，不能重新扫描；剩余内容可继续审核和整理",
+        )
     if job.status not in {
         JobStatus.DRAFT,
         JobStatus.FAILED,
@@ -149,19 +155,9 @@ async def list_matches(
     if decision is not None:
         filters.append(MediaMatch.decision == decision)
     if review_state == MatchReviewState.PENDING:
-        filters.append(
-            MediaMatch.decision.in_([MatchDecision.REVIEW, MatchDecision.UNRESOLVED])
-        )
+        filters.append(pending_review_filter())
     elif review_state == MatchReviewState.REVIEWED:
-        filters.append(
-            MediaMatch.decision.in_(
-                [
-                    MatchDecision.AUTO_APPROVED,
-                    MatchDecision.APPROVED,
-                    MatchDecision.IGNORED,
-                ]
-            )
-        )
+        filters.append(reviewed_filter())
     total = await session.scalar(select(func.count(MediaMatch.id)).join(SourceItem).where(*filters))
     match_count = total or 0
     statement = (
@@ -338,6 +334,12 @@ async def update_source_item(
     session: DatabaseSession,
     services: Services,
 ) -> SourceItemView:
+    job = await _get_job_or_404(session, job_id)
+    if job.executed_items:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="已有内容完成整理，不能重新扫描过滤规则",
+        )
     item = await session.scalar(
         select(SourceItem).where(
             SourceItem.id == item_id,
@@ -355,7 +357,6 @@ async def update_source_item(
             detail="该类型不能人工恢复",
         )
     item.user_action = request.action
-    job = await _get_job_or_404(session, job_id)
     include_paths_value = job.config.get("include_paths", [])
     include_paths = (
         {path for path in include_paths_value if isinstance(path, str)}
@@ -768,10 +769,19 @@ async def execute_job(
     services: Services,
 ) -> OrganizeJob:
     job = await _get_job_or_404(session, job_id)
-    if job.status not in {JobStatus.READY, JobStatus.PARTIAL_FAILED}:
+    if job.status not in {
+        JobStatus.REVIEW_REQUIRED,
+        JobStatus.READY,
+        JobStatus.PARTIAL_FAILED,
+    }:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="任务尚未完成审核，或当前状态不能整批执行",
+            detail="当前状态不能整理已审批内容",
+        )
+    if job.status == JobStatus.REVIEW_REQUIRED and job.approved_items <= job.executed_items:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="当前没有尚未整理的已审批内容",
         )
     if job.config.get("_auto_execute_queued", False):
         raise HTTPException(

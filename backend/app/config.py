@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     ai_api_key: str = ""
     ai_model: str = "gpt-4.1-mini"
     session_max_age_seconds: int = Field(default=86_400 * 14, ge=300)
+    guangya_api_read_interval_seconds: float = Field(default=0.35, ge=0.05, le=10)
+    guangya_api_write_interval_seconds: float = Field(default=1.2, ge=0.1, le=30)
+    guangya_api_poll_interval_seconds: float = Field(default=1.0, ge=0.1, le=30)
+    guangya_api_jitter_seconds: float = Field(default=0.2, ge=0, le=5)
+    guangya_api_max_retries: int = Field(default=3, ge=0, le=8)
+    guangya_api_backoff_base_seconds: float = Field(default=2.0, ge=0.1, le=60)
+    guangya_api_backoff_max_seconds: float = Field(default=30.0, ge=1, le=300)
 
 
 @lru_cache

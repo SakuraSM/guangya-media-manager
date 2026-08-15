@@ -1,22 +1,69 @@
 import asyncio
 import ipaddress
-from collections.abc import Mapping
+import logging
+import random
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from importlib import import_module
 from io import BytesIO
 from typing import Protocol
 
 import httpx
 
+from app.config import Settings, get_settings
 from app.providers.base import CloudNode, LoginChallenge, LoginTokens, ProviderTask
+from app.providers.request_guard import (
+    CloudRequestGuard,
+    RequestGuardPolicy,
+    RequestKind,
+)
 
 DEFAULT_CLIENT_ID = "aMe-8VSlkrbQXpUR"
 DEFAULT_PAGE_SIZE = 1000
 MAX_LIST_PAGES = 1000
 DOWNLOAD_TIMEOUT_SECONDS = 10
+RATE_LIMIT_MARKERS = (
+    "429",
+    "rate limit",
+    "too many request",
+    "request too frequent",
+    "请求频繁",
+    "请求过于频繁",
+    "操作频繁",
+    "访问频繁",
+    "稍后再试",
+    "限流",
+    "风控",
+)
+TRANSIENT_MARKERS = (
+    "timeout",
+    "timed out",
+    "connection reset",
+    "connection refused",
+    "connection aborted",
+    "temporarily unavailable",
+    "service unavailable",
+    "系统繁忙",
+    "服务繁忙",
+)
+
+logger = logging.getLogger(__name__)
 
 
 class GuangyaProviderError(RuntimeError):
     pass
+
+
+class GuangyaRateLimitError(GuangyaProviderError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class GuangyaRetryPolicy:
+    max_retries: int
+    backoff_base_seconds: float
+    backoff_max_seconds: float
+    jitter_seconds: float
 
 
 class GuangyaClientProtocol(Protocol):
@@ -51,7 +98,14 @@ class GuangyaClientProtocol(Protocol):
 
 
 class GuangyaProvider:
-    def __init__(self, access_token: str = "", refresh_token: str = "") -> None:
+    def __init__(
+        self,
+        access_token: str = "",
+        refresh_token: str = "",
+        *,
+        settings: Settings | None = None,
+    ) -> None:
+        active_settings = settings or get_settings()
         try:
             guangyapan_module = import_module("guangyapan")
         except ModuleNotFoundError as error:
@@ -62,13 +116,33 @@ class GuangyaProvider:
         self._client: GuangyaClientProtocol = client_class(
             access_token, refresh_token=refresh_token
         )
+        self._retry_policy = GuangyaRetryPolicy(
+            max_retries=active_settings.guangya_api_max_retries,
+            backoff_base_seconds=active_settings.guangya_api_backoff_base_seconds,
+            backoff_max_seconds=active_settings.guangya_api_backoff_max_seconds,
+            jitter_seconds=active_settings.guangya_api_jitter_seconds,
+        )
+        self._request_guard = CloudRequestGuard(
+            redis_url=active_settings.redis_url,
+            policy=RequestGuardPolicy(
+                read_interval_seconds=active_settings.guangya_api_read_interval_seconds,
+                write_interval_seconds=active_settings.guangya_api_write_interval_seconds,
+                poll_interval_seconds=active_settings.guangya_api_poll_interval_seconds,
+                jitter_seconds=active_settings.guangya_api_jitter_seconds,
+            ),
+        )
 
     def set_tokens(self, access_token: str, refresh_token: str) -> None:
         self._client.token = access_token
         self._client.refresh_token = refresh_token
 
     async def start_login(self) -> LoginChallenge:
-        response = await asyncio.to_thread(self._client.auth_code, DEFAULT_CLIENT_ID)
+        response = await self._call_client(
+            "start login",
+            self._client.auth_code,
+            DEFAULT_CLIENT_ID,
+            kind=RequestKind.AUTH,
+        )
         response_map = _require_mapping(response)
         return LoginChallenge(
             device_code=_require_string(response_map, "device_code"),
@@ -83,7 +157,14 @@ class GuangyaProvider:
             "device_code": device_code,
             "client_id": DEFAULT_CLIENT_ID,
         }
-        response = _require_mapping(await asyncio.to_thread(self._client.auth_token, payload))
+        response = _require_mapping(
+            await self._call_client(
+                "poll login",
+                self._client.auth_token,
+                payload,
+                kind=RequestKind.POLL,
+            )
+        )
         if response.get("error") == "authorization_pending":
             return None
         if "error" in response:
@@ -95,9 +176,11 @@ class GuangyaProvider:
 
     async def refresh_tokens(self, refresh_token: str) -> LoginTokens:
         try:
-            raw_response = await asyncio.to_thread(
+            raw_response = await self._call_client(
+                "refresh token",
                 self._client.refresh_access_token,
                 refresh_token,
+                kind=RequestKind.AUTH,
             )
         except Exception as error:
             raise GuangyaProviderError("Guangya token refresh failed") from error
@@ -108,7 +191,13 @@ class GuangyaProvider:
         )
 
     async def get_storage_usage(self) -> tuple[int, int]:
-        response = _require_mapping(await asyncio.to_thread(self._client.user_assets))
+        response = _require_mapping(
+            await self._call_client(
+                "read storage usage",
+                self._client.user_assets,
+                kind=RequestKind.READ,
+            )
+        )
         payload = _require_mapping(response.get("data", {}))
         capacity_bytes = _as_int(payload.get("totalSpaceSize"))
         used_bytes = _as_int(payload.get("usedSpaceSize"))
@@ -120,13 +209,15 @@ class GuangyaProvider:
         entries: list[Mapping[str, object]] = []
         for page_number in range(MAX_LIST_PAGES):
             response = _require_mapping(
-                await asyncio.to_thread(
+                await self._call_client(
+                    "list directory",
                     self._client.fs_list,
                     {
                         "parentId": parent_id,
                         "page": page_number,
                         "pageSize": DEFAULT_PAGE_SIZE,
                     },
+                    kind=RequestKind.READ,
                 )
             )
             page_entries = _extract_file_list(response)
@@ -139,15 +230,24 @@ class GuangyaProvider:
 
     async def copy_items(self, file_ids: list[str], target_parent_id: str) -> ProviderTask:
         response = _require_mapping(
-            await asyncio.to_thread(
+            await self._call_client(
+                "copy files",
                 self._client.fs_copy,
                 {"fileIds": file_ids, "parentId": target_parent_id},
+                kind=RequestKind.WRITE,
             )
         )
         return ProviderTask(task_id=_extract_task_id(response))
 
     async def task_is_complete(self, task_id: str) -> bool:
-        response = _require_mapping(await asyncio.to_thread(self._client.fs_task_status, task_id))
+        response = _require_mapping(
+            await self._call_client(
+                "poll file task",
+                self._client.fs_task_status,
+                task_id,
+                kind=RequestKind.POLL,
+            )
+        )
         payload = _require_mapping(response.get("data", {}))
         status_value = str(payload.get("status", "")).lower()
         if status_value in {"failed", "failure", "error", "-1", "4"}:
@@ -156,7 +256,12 @@ class GuangyaProvider:
 
     async def resolve_task_nodes(self, task_id: str, parent_path: str) -> list[CloudNode]:
         response = _require_mapping(
-            await asyncio.to_thread(self._client.fs_info_by_task_id, task_id)
+            await self._call_client(
+                "resolve file task",
+                self._client.fs_info_by_task_id,
+                task_id,
+                kind=RequestKind.READ,
+            )
         )
         payload = response.get("data", {})
         if isinstance(payload, list):
@@ -174,9 +279,11 @@ class GuangyaProvider:
 
     async def create_directory(self, name: str, parent_id: str) -> CloudNode:
         response = _require_mapping(
-            await asyncio.to_thread(
+            await self._call_client(
+                "create directory",
                 self._client.fs_mkdir,
                 {"dirName": name, "parentId": parent_id, "failIfNameExist": True},
+                kind=RequestKind.WRITE,
             )
         )
         payload = _require_mapping(response.get("data", {}))
@@ -184,21 +291,30 @@ class GuangyaProvider:
 
     async def move_items(self, file_ids: list[str], target_parent_id: str) -> ProviderTask:
         response = _require_mapping(
-            await asyncio.to_thread(
+            await self._call_client(
+                "move files",
                 self._client.fs_move,
                 {"fileIds": file_ids, "parentId": target_parent_id},
+                kind=RequestKind.WRITE,
             )
         )
         return ProviderTask(task_id=_extract_task_id(response))
 
     async def rename_item(self, file_id: str, new_name: str) -> None:
-        await asyncio.to_thread(self._client.fs_rename, (file_id, new_name))
+        await self._call_client(
+            "rename file",
+            self._client.fs_rename,
+            (file_id, new_name),
+            kind=RequestKind.WRITE,
+        )
 
     async def upload_bytes(self, filename: str, content: bytes, parent_id: str) -> CloudNode:
         response = _require_mapping(
-            await asyncio.to_thread(
+            await self._call_client(
+                "upload file",
                 self._client.upload_file,
                 BytesIO(content),
+                kind=RequestKind.WRITE,
                 file_name=filename,
                 parent_id=parent_id,
             )
@@ -208,7 +324,12 @@ class GuangyaProvider:
 
     async def read_bytes(self, file_id: str, *, max_bytes: int) -> bytes:
         try:
-            signed_url = await asyncio.to_thread(self._client.download_url, file_id)
+            signed_url = await self._call_client(
+                "create download URL",
+                self._client.download_url,
+                file_id,
+                kind=RequestKind.READ,
+            )
             if not isinstance(signed_url, str):
                 raise GuangyaProviderError("Guangya download URL is unavailable")
             _validate_download_url(httpx.URL(signed_url))
@@ -238,6 +359,63 @@ class GuangyaProvider:
         except Exception as error:
             raise GuangyaProviderError("Guangya small file read failed") from error
 
+    async def aclose(self) -> None:
+        request_guard = getattr(self, "_request_guard", None)
+        if request_guard is not None:
+            await request_guard.aclose()
+
+    async def _call_client(
+        self,
+        operation: str,
+        function: Callable[..., object],
+        *args: object,
+        kind: RequestKind,
+        **kwargs: object,
+    ) -> object:
+        policy = getattr(
+            self,
+            "_retry_policy",
+            GuangyaRetryPolicy(
+                max_retries=0,
+                backoff_base_seconds=2,
+                backoff_max_seconds=30,
+                jitter_seconds=0,
+            ),
+        )
+        request_guard = getattr(self, "_request_guard", None)
+        for attempt in range(policy.max_retries + 1):
+            if request_guard is not None:
+                await request_guard.wait(kind)
+            try:
+                response = await asyncio.to_thread(function, *args, **kwargs)
+                rate_limit_message = _rate_limit_message(response)
+                if rate_limit_message is not None:
+                    raise GuangyaRateLimitError(rate_limit_message)
+                return response
+            except Exception as error:
+                rate_limited = _is_rate_limited_error(error)
+                retryable = rate_limited or (
+                    kind is not RequestKind.WRITE and _is_transient_error(error)
+                )
+                if not retryable or attempt >= policy.max_retries:
+                    if rate_limited:
+                        raise GuangyaProviderError(
+                            f"Guangya {operation} is rate limited; retry later"
+                        ) from error
+                    raise GuangyaProviderError(f"Guangya {operation} request failed") from error
+                delay = _retry_delay_seconds(error, attempt, policy)
+                logger.warning(
+                    "Guangya request throttled; backing off",
+                    extra={
+                        "operation": operation,
+                        "attempt": attempt + 1,
+                        "delay_seconds": round(delay, 2),
+                        "rate_limited": rate_limited,
+                    },
+                )
+                await asyncio.sleep(delay)
+        raise AssertionError("unreachable")
+
 
 def _validate_download_url(url: httpx.URL) -> None:
     hostname = (url.host or "").casefold()
@@ -254,6 +432,75 @@ def _validate_download_url(url: httpx.URL) -> None:
         return
     if not address.is_global:
         raise GuangyaProviderError("Guangya download URL is not allowed")
+
+
+def _rate_limit_message(response: object) -> str | None:
+    if not isinstance(response, Mapping):
+        return None
+    status_value = response.get("status") or response.get("statusCode") or response.get("code")
+    if str(status_value) == "429":
+        return "Guangya API rate limit response"
+    for key in ("message", "msg", "error", "error_description"):
+        value = response.get(key)
+        if isinstance(value, str) and _contains_marker(value, RATE_LIMIT_MARKERS):
+            return "Guangya API rate limit response"
+    payload = response.get("data")
+    if isinstance(payload, Mapping):
+        return _rate_limit_message(payload)
+    return None
+
+
+def _is_rate_limited_error(error: Exception) -> bool:
+    if isinstance(error, GuangyaRateLimitError):
+        return True
+    response = getattr(error, "response", None)
+    if getattr(response, "status_code", None) == 429:
+        return True
+    return _contains_marker(str(error), RATE_LIMIT_MARKERS)
+
+
+def _is_transient_error(error: Exception) -> bool:
+    if isinstance(error, (TimeoutError, OSError, httpx.TimeoutException, httpx.NetworkError)):
+        return True
+    response = getattr(error, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if isinstance(status_code, int) and (status_code == 408 or status_code >= 500):
+        return True
+    return _contains_marker(str(error), TRANSIENT_MARKERS)
+
+
+def _retry_delay_seconds(
+    error: Exception,
+    attempt: int,
+    policy: GuangyaRetryPolicy,
+) -> float:
+    retry_after = _retry_after_seconds(error)
+    exponential_delay = min(
+        policy.backoff_max_seconds,
+        policy.backoff_base_seconds * 2**attempt,
+    )
+    base_delay = max(exponential_delay, retry_after or 0.0)
+    return float(base_delay + random.uniform(0, policy.jitter_seconds))
+
+
+def _retry_after_seconds(error: Exception) -> float | None:
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", None)
+    if not isinstance(headers, Mapping):
+        return None
+    raw_value = headers.get("retry-after") or headers.get("Retry-After")
+    if isinstance(raw_value, bool) or not isinstance(raw_value, (str, int, float)):
+        return None
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, min(value, 300.0))
+
+
+def _contains_marker(value: str, markers: tuple[str, ...]) -> bool:
+    normalized = value.casefold()
+    return any(marker in normalized for marker in markers)
 
 
 def _require_mapping(value: object) -> Mapping[str, object]:

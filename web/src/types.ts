@@ -159,6 +159,7 @@ export interface Job {
   current_stage: string
   total_items: number
   approved_items: number
+  executed_items: number
   review_items: number
   failed_items: number
   copied_bytes: number
@@ -436,6 +437,7 @@ export interface OrganizeConfig {
     extras_policy: 'EXCLUDE_REVIEWABLE' | 'INCLUDE'
     sample_max_mb: number
     exclude_globs: string[]
+    title_extraction_regex: string
     include_paths: string[]
     output_layout: OutputLayout
     include_region_directory: boolean

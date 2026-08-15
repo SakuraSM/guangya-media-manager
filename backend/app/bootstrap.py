@@ -13,7 +13,7 @@ def build_provider() -> CloudProvider:
     settings = get_settings()
     if settings.demo_mode:
         return DemoGuangyaProvider()
-    return GuangyaProvider()
+    return GuangyaProvider(settings=settings)
 
 
 async def build_organizer_service(

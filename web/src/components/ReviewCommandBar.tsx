@@ -110,7 +110,14 @@ export function ReviewCommandBar({
   const isRetryingBatch =
     job.status === JOB_STATUS.PARTIAL_FAILED &&
     (job.failed_items > 0 || Boolean(job.error_message))
-  const canExecute = job.status === JOB_STATUS.READY || isRetryingBatch
+  const unexecutedApprovedItems = Math.max(
+    0,
+    job.approved_items - job.executed_items,
+  )
+  const canExecute =
+    job.status === JOB_STATUS.READY ||
+    (job.status === JOB_STATUS.REVIEW_REQUIRED && unexecutedApprovedItems > 0) ||
+    isRetryingBatch
   const progressPercentage = Math.round(job.progress * PERCENT_SCALE)
   const isSelectionApproval = selectedCount > 0
   const canApproveContext = isSelectionApproval
@@ -155,6 +162,11 @@ export function ReviewCommandBar({
             <span className="flex items-center gap-1 text-success">
               <CheckCircle2 aria-hidden="true" /> {job.approved_items} 已通过
             </span>
+            {job.executed_items > 0 ? (
+              <span className="flex items-center gap-1 text-primary">
+                <FolderOutput aria-hidden="true" /> {job.executed_items} 已整理
+              </span>
+            ) : null}
             <span className="flex items-center gap-1 text-warning">
               <TriangleAlert aria-hidden="true" /> {job.review_items} 需要审核
             </span>
@@ -292,7 +304,9 @@ export function ReviewCommandBar({
               ? '正在提交整批任务'
               : isRetryingBatch
                 ? '重试整批执行'
-                : '确认并整批执行'}
+                : job.status === JOB_STATUS.REVIEW_REQUIRED
+                  ? `整理已审批（${unexecutedApprovedItems}）`
+                  : '确认并整批执行'}
           </Button>
           <AlertDialog>
             <AlertDialogTrigger asChild>

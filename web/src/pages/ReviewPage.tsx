@@ -175,7 +175,9 @@ export function ReviewPage() {
       setActionMessage(
         job.status === JOB_STATUS.PARTIAL_FAILED
           ? '已提交整批重试，将自动跳过已完成文件。'
-          : '审核计划已冻结，整批复制任务已提交。',
+          : job.status === JOB_STATUS.REVIEW_REQUIRED
+            ? '已审批内容已提交整理，剩余内容可以继续审核。'
+            : '审核计划已冻结，整批复制任务已提交。',
       )
       await refreshReviewData()
     },
@@ -286,6 +288,9 @@ export function ReviewPage() {
   const matchPage = matchesQuery.data
   const matchGroups = groupMediaMatches(matchPage.items)
   const isJobEditable = isEditableJobStatus(job.status) && !job.ai_review_running
+  const isSelectedMatchPublished =
+    selectedMatch?.execution_status === 'COMPLETED' ||
+    selectedMatch?.execution_status === 'SKIPPED'
   const mutationError = [
     updateMutation.error,
     retryMutation.error,
@@ -324,12 +329,12 @@ export function ReviewPage() {
     setReviewFilter(nextFilter)
     handlePageChange(1)
   }
-  const handleApprove = () => {
-    if (!selectedMatch || effectiveCandidateId === null) return
+  const handleApproveCandidate = (candidateId: number) => {
+    if (!selectedMatch) return
     updateMutation.mutate({
       match: selectedMatch,
       decision: MATCH_DECISION.APPROVED,
-      candidateId: effectiveCandidateId,
+      candidateId,
     })
   }
   const handleToggleIgnore = () => {
@@ -404,7 +409,7 @@ export function ReviewPage() {
       />
       <ScanSummaryPanel
         items={sourceItemsQuery.data}
-        isSaving={sourceItemMutation.isPending || !isJobEditable}
+        isSaving={sourceItemMutation.isPending || !isJobEditable || job.executed_items > 0}
         onChangeAction={(itemId, action) =>
           sourceItemMutation.mutate({ itemId, action })
         }
@@ -436,7 +441,8 @@ export function ReviewPage() {
           batchApproval.isPending ||
           versionMutation.isPending ||
           classificationMutation.isPending ||
-          !isJobEditable
+          !isJobEditable ||
+          isSelectedMatchPublished
         }
         isRetrying={retryMutation.isPending}
         isRetryingGroup={groupRetryMutation.isPending}
@@ -445,7 +451,7 @@ export function ReviewPage() {
         onTogglePageSelection={batchApproval.togglePageSelection}
         onReviewFilterChange={handleReviewFilterChange}
         onSelectCandidate={setSelectedCandidateId}
-        onApprove={handleApprove}
+        onApproveCandidate={handleApproveCandidate}
         onToggleIgnore={handleToggleIgnore}
         onRetry={handleRetry}
         onRetryGroup={handleRetryGroup}

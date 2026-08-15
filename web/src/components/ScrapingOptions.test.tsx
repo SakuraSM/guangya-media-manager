@@ -24,6 +24,7 @@ const SCRAPING_CONFIG: CreateJobInput['config'] = {
   extras_policy: 'EXCLUDE_REVIEWABLE',
   sample_max_mb: 300,
   exclude_globs: [],
+  title_extraction_regex: '',
   include_paths: [],
   output_layout: 'STANDARD',
   include_region_directory: true,

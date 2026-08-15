@@ -77,6 +77,7 @@ async def run_worker() -> None:
     finally:
         scheduler_task.cancel()
         await asyncio.gather(scheduler_task, return_exceptions=True)
+        await provider.aclose()
         await redis.aclose()
 
 

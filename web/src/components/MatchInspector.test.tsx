@@ -52,7 +52,7 @@ describe('MatchInspector', () => {
           isRetrying={false}
           isRetryingGroup={false}
           onSelectCandidate={vi.fn()}
-          onApprove={vi.fn()}
+          onApproveCandidate={vi.fn()}
           onToggleIgnore={handleToggleIgnore}
           onRetry={handleRetry}
           onRetryGroup={vi.fn()}
@@ -71,7 +71,6 @@ describe('MatchInspector', () => {
       </QueryClientProvider>,
     )
 
-    expect(screen.getByRole('button', { name: '批准并继续' })).toBeDisabled()
     expect(
       screen.getByText('TMDB 请求失败，请检查网络或 API Token。'),
     ).toBeInTheDocument()

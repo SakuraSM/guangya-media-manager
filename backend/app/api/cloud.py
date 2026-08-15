@@ -21,8 +21,8 @@ router = APIRouter(
     dependencies=[Depends(require_admin_session)],
 )
 
-DIRECTORY_COUNT_CONCURRENCY = 4
-DIRECTORY_COUNT_TTL_SECONDS = 60
+DIRECTORY_COUNT_CONCURRENCY = 2
+DIRECTORY_COUNT_TTL_SECONDS = 180
 _directory_count_cache: dict[str, tuple[float, int]] = {}
 
 

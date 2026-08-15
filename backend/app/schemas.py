@@ -1,7 +1,8 @@
+import re
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.domain import (
     AccountStatus,
@@ -82,10 +83,23 @@ class JobConfig(BaseModel):
     extras_policy: str = Field(default="EXCLUDE_REVIEWABLE", max_length=32)
     sample_max_mb: int = Field(default=300, ge=1, le=10_000)
     exclude_globs: list[str] = Field(default_factory=list, max_length=50)
+    title_extraction_regex: str = Field(default="", max_length=256)
     include_paths: list[str] = Field(default_factory=list, max_length=500)
     output_layout: OutputLayout = OutputLayout.STANDARD
     include_region_directory: bool = True
     quality_profile: QualityProfile = QualityProfile.QUALITY
+
+    @field_validator("title_extraction_regex")
+    @classmethod
+    def validate_title_extraction_regex(cls, value: str) -> str:
+        pattern = value.strip()
+        if not pattern:
+            return ""
+        try:
+            re.compile(pattern)
+        except re.error as error:
+            raise ValueError(f"标题提取正则无效：{error.msg}") from error
+        return pattern
 
 
 class CreateJobRequest(BaseModel):
@@ -109,6 +123,7 @@ class JobView(ApiModel):
     current_stage: str
     total_items: int
     approved_items: int
+    executed_items: int = 0
     review_items: int
     failed_items: int
     copied_bytes: int

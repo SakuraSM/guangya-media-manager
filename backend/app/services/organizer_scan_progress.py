@@ -16,6 +16,7 @@ from app.services.media_parser import (
     parse_media_filename,
 )
 from app.services.progress_events import record_job_progress, record_match_progress
+from app.services.title_preprocessor import apply_title_extraction
 
 RULE_PARSE_START_PROGRESS = 0.36
 RULE_PARSE_COMPLETE_PROGRESS = 0.38
@@ -81,6 +82,12 @@ class IncrementalMatchStore:
             source_root=self._job.source_directory_path,
             inferred_season_number=inferred_season_number,
         )
+        title_extraction_regex = self._title_extraction_regex
+        parsed = apply_title_extraction(
+            parsed,
+            cloud_node.name,
+            title_extraction_regex,
+        )
         group_key = _rule_group_key(parsed, parent_path)
         source_item = SourceItem(
             job_id=self._job.id,
@@ -122,7 +129,18 @@ class IncrementalMatchStore:
                 "directory_context": directory_context_evidence(
                     parent_path,
                     self._job.source_directory_path,
-                )
+                ),
+                **(
+                    {
+                        "title_extraction": {
+                            "pattern": title_extraction_regex,
+                            "extracted_title": parsed.title,
+                        }
+                    }
+                    if title_extraction_regex
+                    and "CUSTOM_TITLE_EXTRACTED" in parsed.reason_codes
+                    else {}
+                ),
             },
             episode_date=parsed.episode_date,
             release_info={
@@ -138,6 +156,11 @@ class IncrementalMatchStore:
             media_match=media_match,
             group_key=group_key,
         )
+
+    @property
+    def _title_extraction_regex(self) -> str:
+        value = self._job.config.get("title_extraction_regex", "")
+        return value if isinstance(value, str) else ""
 
     def _update_rule_progress(
         self,
