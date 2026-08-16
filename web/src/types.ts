@@ -68,6 +68,7 @@ export type OperationStatus =
   | 'COMPLETED'
   | 'SKIPPED'
   | 'FAILED'
+export type FileOperationType = 'COPY' | 'MOVE' | 'RENAME' | 'UPLOAD' | 'TRASH'
 
 export type ProgressStage =
   | 'SCAN'
@@ -77,6 +78,7 @@ export type ProgressStage =
   | 'AUTO_EXECUTE'
   | 'COPY'
   | 'SCRAPE'
+  | 'CLEANUP'
   | 'FINALIZE'
 
 export type ProgressState =
@@ -86,6 +88,16 @@ export type ProgressState =
   | 'COMPLETED'
   | 'FAILED'
   | 'CANCELED'
+
+export interface FileOperationProgressSummary {
+  state: ProgressState
+  completed: number
+  total: number
+  succeeded: number
+  failed: number
+  skipped: number
+  current_filename?: string
+}
 
 export interface JobProgressDetail {
   stage?: ProgressStage
@@ -97,6 +109,9 @@ export interface JobProgressDetail {
   skipped?: number
   current_group?: string
   current_match_id?: string
+  current_operation_type?: FileOperationType
+  current_filename?: string
+  operations?: Partial<Record<FileOperationType, FileOperationProgressSummary>>
   message?: string
 }
 
@@ -243,6 +258,10 @@ export interface MediaMatch {
     size_bytes?: number
     preference?: QualityProfile
     recommended?: boolean
+    selected?: boolean
+    selection_mode?: 'SINGLE' | 'AUTO' | 'MANUAL_OVERRIDE'
+    selection_rank?: number
+    selection_keep_count?: number
     recommendation_reason?: string
     score_reason?: string
   }
@@ -251,6 +270,8 @@ export interface MediaMatch {
   version_recommendation: 'SINGLE' | 'PENDING' | 'CONFIRMED' | 'NOT_SELECTED'
   execution_status?: OperationStatus | null
   execution_error?: string | null
+  cleanup_status?: OperationStatus | null
+  cleanup_error?: string | null
 }
 
 export interface MatchDecisionReason {
@@ -442,6 +463,9 @@ export interface OrganizeConfig {
     output_layout: OutputLayout
     include_region_directory: boolean
     quality_profile: QualityProfile
+    version_keep_count: number
+    trash_organized_source_files: boolean
+    trash_ignored_source_files: boolean
 }
 
 export interface CreateJobInput {

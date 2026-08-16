@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Bot, ScanSearch, ShieldCheck, Workflow, X } from 'lucide-react'
+import { Bot, ScanSearch, ShieldCheck, Trash2, Workflow, X } from 'lucide-react'
 import { api } from '@/api/client'
 import type { CloudDirectory, CreateJobInput } from '@/types'
 import { DEFAULT_ORGANIZE_CONFIG } from '@/organizeConfig'
@@ -146,6 +146,30 @@ export function NewJobPanel({ onCreated, onCancel }: NewJobPanelProps) {
               <SelectItem value="SPACE_SAVING">节省空间</SelectItem>
             </SelectContent>
           </Select>
+          <FieldDescription>
+            自动按分辨率、片源、HDR、编码、音频和文件大小综合排序。
+          </FieldDescription>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="version-keep-count">每组自动保留</FieldLabel>
+          <Select
+            value={String(config.version_keep_count)}
+            onValueChange={(value) =>
+              setConfig((current) => ({
+                ...current,
+                version_keep_count: Number(value),
+              }))
+            }
+          >
+            <SelectTrigger id="version-keep-count" className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="1">最优 1 个版本</SelectItem>
+              <SelectItem value="2">最优 2 个版本</SelectItem>
+              <SelectItem value="3">最优 3 个版本</SelectItem>
+              <SelectItem value="0">全部保留</SelectItem>
+            </SelectContent>
+          </Select>
+          <FieldDescription>同一电影版本或同一季集内自动选择，不再等待人工确认。</FieldDescription>
         </Field>
         <Field>
           <FieldLabel htmlFor="extras-policy">附加视频</FieldLabel>
@@ -275,11 +299,68 @@ export function NewJobPanel({ onCreated, onCancel }: NewJobPanelProps) {
         </FieldGroup>
       </FieldSet>
 
-      <Alert>
+      <FieldSet className="rounded-xl border border-destructive/30 p-4">
+        <FieldLegend>源文件清理</FieldLegend>
+        <FieldGroup data-slot="checkbox-group">
+          <Field orientation="horizontal">
+            <FieldLabel htmlFor="trash-organized-source">
+              <FieldContent>
+                <FieldTitle className="gap-2">
+                  <Trash2 aria-hidden="true" />
+                  整理成功后清理源文件
+                </FieldTitle>
+                <FieldDescription>
+                  仅在复制、刮削和正式目录发布全部成功后，将本批媒体及关联字幕移入光鸭回收站。
+                </FieldDescription>
+              </FieldContent>
+            </FieldLabel>
+            <Switch
+              id="trash-organized-source"
+              checked={config.trash_organized_source_files}
+              onCheckedChange={(checked) =>
+                setConfig((current) => ({
+                  ...current,
+                  trash_organized_source_files: checked,
+                }))
+              }
+            />
+          </Field>
+          <Field orientation="horizontal">
+            <FieldLabel htmlFor="trash-ignored-source">
+              <FieldContent>
+                <FieldTitle>清理明确无关文件</FieldTitle>
+                <FieldDescription>
+                  最终批次成功后，清理系统垃圾、压缩包、临时文件、样片及自定义排除规则命中的文件。
+                </FieldDescription>
+              </FieldContent>
+            </FieldLabel>
+            <Switch
+              id="trash-ignored-source"
+              checked={config.trash_ignored_source_files}
+              onCheckedChange={(checked) =>
+                setConfig((current) => ({
+                  ...current,
+                  trash_ignored_source_files: checked,
+                }))
+              }
+            />
+          </Field>
+        </FieldGroup>
+      </FieldSet>
+
+      <Alert
+        variant={
+          config.trash_organized_source_files || config.trash_ignored_source_files
+            ? 'destructive'
+            : 'default'
+        }
+      >
         <ShieldCheck aria-hidden="true" />
         <AlertTitle>安全执行策略</AlertTitle>
         <AlertDescription>
-          源目录零写入、目标同名不覆盖、失败暂存内容不自动删除。
+          {config.trash_organized_source_files || config.trash_ignored_source_files
+            ? '已启用源文件清理。文件只会移入光鸭回收站，不会自动清空回收站；失败、取消或目标冲突时不清理。'
+            : '默认不修改源目录、目标同名不覆盖、失败暂存内容不自动删除。'}
         </AlertDescription>
       </Alert>
       {createMutation.isError ? <ErrorNotice message={createMutation.error.message} /> : null}

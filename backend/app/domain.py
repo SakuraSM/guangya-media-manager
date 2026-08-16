@@ -132,6 +132,7 @@ class OperationType(StrEnum):
     MOVE = "MOVE"
     RENAME = "RENAME"
     UPLOAD = "UPLOAD"
+    TRASH = "TRASH"
 
 
 class ProgressStage(StrEnum):
@@ -142,6 +143,7 @@ class ProgressStage(StrEnum):
     AUTO_EXECUTE = "AUTO_EXECUTE"
     COPY = "COPY"
     SCRAPE = "SCRAPE"
+    CLEANUP = "CLEANUP"
     FINALIZE = "FINALIZE"
 
 

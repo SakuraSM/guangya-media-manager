@@ -27,6 +27,11 @@ async def test_partial_execution_selects_only_unpublished_approved_matches() -> 
                 _source_with_match("published", MatchDecision.APPROVED),
                 _source_with_match("next", MatchDecision.APPROVED),
                 _source_with_match("pending", MatchDecision.REVIEW),
+                _source_with_match(
+                    "auto-skipped",
+                    MatchDecision.APPROVED,
+                    version_recommendation="NOT_SELECTED",
+                ),
             ]
         )
         await session.commit()
@@ -39,7 +44,12 @@ async def test_partial_execution_selects_only_unpublished_approved_matches() -> 
     assert job.executed_items == 1
 
 
-def _source_with_match(match_id: str, decision: MatchDecision) -> SourceItem:
+def _source_with_match(
+    match_id: str,
+    decision: MatchDecision,
+    *,
+    version_recommendation: str = "SINGLE",
+) -> SourceItem:
     source_item = SourceItem(
         id=f"source-{match_id}",
         job_id="job",
@@ -52,6 +62,6 @@ def _source_with_match(match_id: str, decision: MatchDecision) -> SourceItem:
         id=match_id,
         media_type=MediaType.MOVIE,
         decision=decision,
-        version_recommendation="SINGLE",
+        version_recommendation=version_recommendation,
     )
     return source_item

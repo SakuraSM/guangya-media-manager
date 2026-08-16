@@ -99,6 +99,28 @@ async def test_ambiguous_write_timeout_is_not_retried() -> None:
     assert client.call_count == 1
 
 
+class RecordingTrashClient:
+    def __init__(self) -> None:
+        self.payload: object = None
+
+    def fs_delete(self, payload: object) -> object:
+        self.payload = payload
+        return {"data": {"taskId": "trash-task"}}
+
+
+async def test_trash_uses_recoverable_delete_endpoint() -> None:
+    provider = object.__new__(GuangyaProvider)
+    client = RecordingTrashClient()
+    provider._client = client  # type: ignore[assignment]
+    provider._request_guard = RecordingGuard()
+    provider._retry_policy = GuangyaRetryPolicy(0, 0, 0, 0)
+
+    task = await provider.trash_items(["file-1", "file-2"])
+
+    assert task.task_id == "trash-task"
+    assert client.payload == {"fileIds": ["file-1", "file-2"]}
+
+
 @pytest.mark.parametrize(
     "url",
     (

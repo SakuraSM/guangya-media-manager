@@ -121,6 +121,31 @@ describe('GroupedMatchTable', () => {
     expect(screen.getByText('识别中')).toBeVisible()
   })
 
+  it('shows copy and source cleanup states independently', () => {
+    const cleanupMatch: MediaMatch = {
+      ...APPROVABLE_MATCH,
+      execution_status: 'COMPLETED',
+      cleanup_status: 'RUNNING',
+    }
+
+    render(
+      <GroupedMatchTable
+        groups={groupMediaMatches([cleanupMatch])}
+        selectedMatchId={null}
+        selectedMatchIds={new Set()}
+        isSelectionEnabled
+        reviewFilter={REVIEW_FILTER.PENDING}
+        isFilterLoading={false}
+        onSelectMatch={vi.fn()}
+        onToggleSelection={vi.fn()}
+        onTogglePageSelection={vi.fn()}
+        onReviewFilterChange={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('已复制 · 正在清理')).toBeVisible()
+  })
+
   it('scrolls the active approval row inside the list viewport', () => {
     const boundsSpy = vi
       .spyOn(Element.prototype, 'getBoundingClientRect')

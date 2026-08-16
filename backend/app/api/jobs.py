@@ -178,14 +178,16 @@ async def list_matches(
     )
     matches = (await session.scalars(statement)).all()
     source_item_ids = [media_match.source_item_id for media_match in matches]
-    copy_operations = (
+    file_operations = (
         (
             await session.scalars(
                 select(FileOperation)
                 .where(
                     FileOperation.job_id == job_id,
                     FileOperation.source_item_id.in_(source_item_ids),
-                    FileOperation.operation_type == OperationType.COPY,
+                    FileOperation.operation_type.in_(
+                        [OperationType.COPY, OperationType.TRASH]
+                    ),
                 )
                 .order_by(FileOperation.updated_at.desc())
             )
@@ -193,18 +195,23 @@ async def list_matches(
         if source_item_ids
         else []
     )
-    operations_by_source_id: dict[str, FileOperation] = {}
-    for operation in copy_operations:
-        if operation.source_item_id is not None:
-            operations_by_source_id.setdefault(
-                operation.source_item_id,
-                operation,
-            )
+    copy_operations_by_source_id: dict[str, FileOperation] = {}
+    cleanup_operations_by_source_id: dict[str, FileOperation] = {}
+    for operation in file_operations:
+        if operation.source_item_id is None:
+            continue
+        destination = (
+            copy_operations_by_source_id
+            if operation.operation_type == OperationType.COPY
+            else cleanup_operations_by_source_id
+        )
+        destination.setdefault(operation.source_item_id, operation)
     return MediaMatchPage(
         items=[
             _to_match_view(
                 media_match,
-                operations_by_source_id.get(media_match.source_item_id),
+                copy_operations_by_source_id.get(media_match.source_item_id),
+                cleanup_operations_by_source_id.get(media_match.source_item_id),
             )
             for media_match in matches
         ],
@@ -882,6 +889,7 @@ async def _enqueue_auto_execute_if_ready(
 def _to_match_view(
     media_match: MediaMatch,
     execution_operation: FileOperation | None = None,
+    cleanup_operation: FileOperation | None = None,
 ) -> MediaMatchView:
     return MediaMatchView(
         id=media_match.id,
@@ -928,6 +936,8 @@ def _to_match_view(
         version_recommendation=media_match.version_recommendation,
         execution_status=(execution_operation.status if execution_operation else None),
         execution_error=(execution_operation.error_message if execution_operation else None),
+        cleanup_status=(cleanup_operation.status if cleanup_operation else None),
+        cleanup_error=(cleanup_operation.error_message if cleanup_operation else None),
     )
 
 

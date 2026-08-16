@@ -6,12 +6,20 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain import OperationStatus, OperationType
+from app.domain import (
+    OperationStatus,
+    OperationType,
+    ProgressStage,
+    ProgressState,
+)
 from app.models import FileOperation, OrganizeJob, SourceItem
 from app.providers.base import CloudNode, CloudProvider
 from app.services.organizer_cloud import wait_for_provider_task
 from app.services.organizer_support import make_idempotency_key
-from app.services.progress_events import record_file_operation_progress
+from app.services.progress_events import (
+    record_file_operation_progress,
+    record_job_progress,
+)
 
 RESULT_RESOLVE_DELAYS_SECONDS = (0.25, 0.5, 1.0)
 
@@ -27,6 +35,7 @@ class CopyPlanItem:
 class CopyItemResult:
     source_item_id: str
     succeeded: bool
+    status: OperationStatus = OperationStatus.COMPLETED
     copied_bytes: int = 0
     error_message: str | None = None
 
@@ -55,6 +64,18 @@ class CopyExecutor:
         for item in items:
             grouped_items[item.target_directory.id].append(item)
 
+        record_job_progress(
+            session,
+            job,
+            stage=ProgressStage.COPY,
+            state=ProgressState.RUNNING,
+            total=len(items),
+            operation_type=OperationType.COPY,
+            current_filename=(items[0].source_item.filename if items else None),
+            message=f"准备转移 {len(items)} 个文件",
+        )
+        await session.commit()
+
         for group in grouped_items.values():
             group_results = await self._execute_directory_batch(
                 session=session,
@@ -62,7 +83,51 @@ class CopyExecutor:
                 items=group,
             )
             results.extend(group_results)
+            succeeded = sum(
+                result.status == OperationStatus.COMPLETED for result in results
+            )
+            failed = sum(result.status == OperationStatus.FAILED for result in results)
+            skipped = sum(
+                result.status == OperationStatus.SKIPPED for result in results
+            )
+            is_complete = len(results) >= len(items)
+            record_job_progress(
+                session,
+                job,
+                stage=ProgressStage.COPY,
+                state=(
+                    ProgressState.FAILED
+                    if is_complete and failed
+                    else ProgressState.COMPLETED
+                    if is_complete
+                    else ProgressState.RUNNING
+                ),
+                completed=len(results),
+                total=len(items),
+                succeeded=succeeded,
+                failed=failed,
+                skipped=skipped,
+                operation_type=OperationType.COPY,
+                current_filename=group[-1].source_item.filename,
+                message=f"文件转移 {len(results)}/{len(items)}",
+            )
+            await session.commit()
             if should_stop is not None and await should_stop():
+                record_job_progress(
+                    session,
+                    job,
+                    stage=ProgressStage.COPY,
+                    state=ProgressState.CANCELED,
+                    completed=len(results),
+                    total=len(items),
+                    succeeded=succeeded,
+                    failed=failed,
+                    skipped=skipped,
+                    operation_type=OperationType.COPY,
+                    current_filename=group[-1].source_item.filename,
+                    message=f"文件转移已停止，共处理 {len(results)}/{len(items)}",
+                )
+                await session.commit()
                 break
         return results
 
@@ -93,6 +158,7 @@ class CopyExecutor:
                     CopyItemResult(
                         source_item_id=plan_item.source_item.id,
                         succeeded=True,
+                        status=OperationStatus.COMPLETED,
                     )
                 )
                 continue
@@ -104,6 +170,7 @@ class CopyExecutor:
                         "审核计划中存在重复目标文件名，请调整匹配或版本标签",
                     )
                 )
+                record_file_operation_progress(session, job, operation)
                 continue
 
             recovered_node = await self._recover_previous_copy(
@@ -121,6 +188,7 @@ class CopyExecutor:
                         copied_bytes=plan_item.source_item.size_bytes,
                     )
                 )
+                record_file_operation_progress(session, job, operation)
                 continue
 
             final_node = _find_by_name(existing_nodes, plan_item.final_filename)
@@ -132,6 +200,7 @@ class CopyExecutor:
                         CopyItemResult(
                             source_item_id=plan_item.source_item.id,
                             succeeded=True,
+                            status=OperationStatus.SKIPPED,
                         )
                     )
                 else:
@@ -177,12 +246,16 @@ class CopyExecutor:
         except (RuntimeError, TimeoutError) as error:
             reason = _safe_batch_error(error)
             for prepared_item in prepared:
-                results.append(
-                    self._fail_operation(
-                        prepared_item.operation,
-                        prepared_item.plan,
-                        reason,
-                    )
+                result = self._fail_operation(
+                    prepared_item.operation,
+                    prepared_item.plan,
+                    reason,
+                )
+                results.append(result)
+                record_file_operation_progress(
+                    session,
+                    job,
+                    prepared_item.operation,
                 )
             await session.commit()
             return results
@@ -337,6 +410,7 @@ class CopyExecutor:
         return CopyItemResult(
             source_item_id=item.source_item.id,
             succeeded=True,
+            status=OperationStatus.COMPLETED,
             copied_bytes=copied_bytes,
         )
 
@@ -351,6 +425,7 @@ class CopyExecutor:
         return CopyItemResult(
             source_item_id=item.source_item.id,
             succeeded=False,
+            status=OperationStatus.FAILED,
             error_message=reason,
         )
 

@@ -35,6 +35,7 @@ async def test_ready_scan_starts_execution_when_auto_flow_is_enabled() -> None:
     job = OrganizeJob(
         id="job-1",
         status=JobStatus.READY,
+        approved_items=1,
         config={"auto_execute_after_approval": True},
     )
     session = MagicMock()
@@ -62,6 +63,7 @@ async def test_ready_ai_review_starts_execution_when_auto_flow_is_enabled() -> N
     job = OrganizeJob(
         id="job-ai-review",
         status=JobStatus.READY,
+        approved_items=1,
         config={"auto_execute_after_approval": True},
     )
     session = MagicMock()
@@ -82,6 +84,32 @@ async def test_ready_ai_review_starts_execution_when_auto_flow_is_enabled() -> N
     ai_review_workflow.run.assert_awaited_once_with(job.id)
     execution_workflow.run.assert_awaited_once_with(job.id)
     assert session.add.call_args.args[0].event_type == "AUTO_EXECUTE_STARTED"
+
+
+@pytest.mark.asyncio
+async def test_ready_scan_does_not_execute_when_there_are_no_approved_files() -> None:
+    job = OrganizeJob(
+        id="job-empty",
+        status=JobStatus.READY,
+        approved_items=0,
+        config={"auto_execute_after_approval": True},
+    )
+    session = MagicMock()
+    session.scalar = AsyncMock(return_value=job)
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+    scan_workflow = MagicMock()
+    scan_workflow.run = AsyncMock()
+    execution_workflow = MagicMock()
+    execution_workflow.run = AsyncMock()
+    service = object.__new__(OrganizerService)
+    service._session_factory = lambda: _SessionContext(session)
+    service._scan_workflow = scan_workflow
+    service._execution_workflow = execution_workflow
+
+    await service.run_action("scan", job.id)
+
+    execution_workflow.run.assert_not_awaited()
 
 
 class _SessionContext:

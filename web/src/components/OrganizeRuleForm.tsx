@@ -28,7 +28,10 @@ export function OrganizeRuleForm({
   const [retryLimit, setRetryLimit] = useState(2)
   const [outputLayout, setOutputLayout] = useState<'STANDARD' | 'CLASSIFIED'>('STANDARD')
   const [qualityProfile, setQualityProfile] = useState<'QUALITY' | 'COMPATIBILITY' | 'SPACE_SAVING'>('QUALITY')
+  const [versionKeepCount, setVersionKeepCount] = useState(1)
   const [titleExtractionRegex, setTitleExtractionRegex] = useState('')
+  const [trashOrganizedSource, setTrashOrganizedSource] = useState(false)
+  const [trashIgnoredSource, setTrashIgnoredSource] = useState(false)
 
   return (
     <form
@@ -48,7 +51,10 @@ export function OrganizeRuleForm({
             auto_execute_after_approval: autoExecute,
             output_layout: outputLayout,
             quality_profile: qualityProfile,
+            version_keep_count: versionKeepCount,
             title_extraction_regex: titleExtractionRegex,
+            trash_organized_source_files: trashOrganizedSource,
+            trash_ignored_source_files: trashIgnoredSource,
           },
           schedule_type: scheduleType,
           interval_minutes: scheduleType === 'INTERVAL' ? intervalMinutes : null,
@@ -118,12 +124,34 @@ export function OrganizeRuleForm({
             <SelectContent><SelectItem value="QUALITY">质量优先</SelectItem><SelectItem value="COMPATIBILITY">兼容优先</SelectItem><SelectItem value="SPACE_SAVING">节省空间</SelectItem></SelectContent>
           </Select>
         </Field>
+        <Field>
+          <FieldLabel htmlFor="rule-version-keep-count">每组自动保留</FieldLabel>
+          <Select value={String(versionKeepCount)} onValueChange={(value) => setVersionKeepCount(Number(value))}>
+            <SelectTrigger id="rule-version-keep-count" className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value="1">最优 1 个版本</SelectItem><SelectItem value="2">最优 2 个版本</SelectItem><SelectItem value="3">最优 3 个版本</SelectItem><SelectItem value="0">全部保留</SelectItem></SelectContent>
+          </Select>
+          <FieldDescription>按版本偏好自动选择，不阻塞后续自动整理。</FieldDescription>
+        </Field>
         <Field orientation="horizontal" className="sm:col-span-2">
           <div className="flex-1">
             <FieldLabel htmlFor="rule-auto-execute">审核完成后自动整理</FieldLabel>
-            <FieldDescription>多版本仍必须确认；没有阻断项时才会自动执行。</FieldDescription>
+            <FieldDescription>版本会按上述规则自动选择；只有元数据待审核时才暂停。</FieldDescription>
           </div>
           <Switch id="rule-auto-execute" checked={autoExecute} onCheckedChange={setAutoExecute} />
+        </Field>
+        <Field orientation="horizontal" className="sm:col-span-2">
+          <div className="flex-1">
+            <FieldLabel htmlFor="rule-trash-organized">整理成功后清理源文件</FieldLabel>
+            <FieldDescription>将已发布媒体及关联字幕移入回收站；失败、取消或冲突时不清理。</FieldDescription>
+          </div>
+          <Switch id="rule-trash-organized" checked={trashOrganizedSource} onCheckedChange={setTrashOrganizedSource} />
+        </Field>
+        <Field orientation="horizontal" className="sm:col-span-2">
+          <div className="flex-1">
+            <FieldLabel htmlFor="rule-trash-ignored">清理明确无关文件</FieldLabel>
+            <FieldDescription>仅在任务最终完成时，将明确过滤的无关文件移入回收站。</FieldDescription>
+          </div>
+          <Switch id="rule-trash-ignored" checked={trashIgnoredSource} onCheckedChange={setTrashIgnoredSource} />
         </Field>
         <Field orientation="horizontal" className="sm:col-span-2">
           <div className="flex-1">

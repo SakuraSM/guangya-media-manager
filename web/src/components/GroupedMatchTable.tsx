@@ -221,9 +221,9 @@ function MatchRow({
         {executionLabel ? (
           <Badge
             variant="outline"
-            className={mediaMatch.execution_status === 'FAILED' ? 'text-destructive' : 'text-info'}
-            role={mediaMatch.execution_status === 'FAILED' ? 'alert' : undefined}
-            title={mediaMatch.execution_error ?? undefined}
+            className={hasOperationFailure(mediaMatch) ? 'text-destructive' : 'text-info'}
+            role={hasOperationFailure(mediaMatch) ? 'alert' : undefined}
+            title={mediaMatch.cleanup_error ?? mediaMatch.execution_error ?? undefined}
           >
             {executionLabel}
           </Badge>
@@ -241,14 +241,25 @@ function MatchRow({
 }
 
 function getExecutionLabel(mediaMatch: MediaMatch): string | null {
-  if (!mediaMatch.execution_status) return null
-  return {
+  const copyLabel = mediaMatch.execution_status ? {
     PENDING: '等待复制',
     RUNNING: '复制中',
     COMPLETED: '已复制',
     SKIPPED: '重复跳过',
     FAILED: mediaMatch.execution_error ? `失败：${mediaMatch.execution_error}` : '复制失败',
-  }[mediaMatch.execution_status]
+  }[mediaMatch.execution_status] : null
+  const cleanupLabel = mediaMatch.cleanup_status ? {
+    PENDING: '等待清理',
+    RUNNING: '正在清理',
+    COMPLETED: '已移入回收站',
+    SKIPPED: '清理已跳过',
+    FAILED: mediaMatch.cleanup_error ? `清理失败：${mediaMatch.cleanup_error}` : '清理失败',
+  }[mediaMatch.cleanup_status] : null
+  return cleanupLabel ? [copyLabel, cleanupLabel].filter(Boolean).join(' · ') : copyLabel
+}
+
+function hasOperationFailure(mediaMatch: MediaMatch): boolean {
+  return mediaMatch.execution_status === 'FAILED' || mediaMatch.cleanup_status === 'FAILED'
 }
 
 function originLabel(origin: MediaMatch['match_origin']): string {

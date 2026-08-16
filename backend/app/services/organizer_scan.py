@@ -4,6 +4,7 @@ from pathlib import PurePosixPath
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import selectinload
 
 from app.domain import (
     JobStatus,
@@ -57,6 +58,7 @@ from app.services.metadata_identity import (
     parse_nfo,
 )
 from app.services.metadata_providers import LocalMetadataProvider, TmdbMetadataProvider
+from app.services.organizer_cleanup import SourceCleanupExecutor
 from app.services.organizer_scan_progress import (
     RULE_PARSE_COMPLETE_PROGRESS,
     IncrementalMatchStore,
@@ -76,7 +78,11 @@ from app.services.organizer_support import (
     update_job_state,
 )
 from app.services.progress_events import record_job_progress, record_match_progress
-from app.services.quality import build_quality_decision, version_group_key
+from app.services.quality import (
+    build_quality_decision,
+    version_group_key,
+    version_selection_sort_key,
+)
 from app.services.source_classifier import (
     ClassificationPolicy,
     ClassificationResult,
@@ -103,6 +109,7 @@ class ScanWorkflow:
     ) -> None:
         self._session_factory = session_factory
         self._provider = provider
+        self._source_cleanup = SourceCleanupExecutor(provider)
         self._tmdb_service = tmdb_service
         self._metadata_resolver = MetadataResolver(
             tmdb_service=tmdb_service,
@@ -928,6 +935,47 @@ class ScanWorkflow:
                 )
             )
         await session.commit()
+        if not decisions and job.config.get("trash_ignored_source_files", False):
+            cleanup_result = await self._source_cleanup.execute(
+                session=session,
+                job=job,
+                matches=[],
+                include_ignored=True,
+            )
+            job.status = (
+                JobStatus.PARTIAL_FAILED
+                if cleanup_result.failed
+                else JobStatus.COMPLETED
+            )
+            job.progress = 1
+            job.failed_items = cleanup_result.failed
+            job.current_stage = (
+                "无关文件清理存在失败项，请在光鸭中确认"
+                if cleanup_result.failed
+                else f"扫描完成，{cleanup_result.completed} 个无关文件已移入回收站"
+            )
+            job.error_message = (
+                "为避免对回收站文件重复删除，失败的清理操作不会自动重试"
+                if cleanup_result.failed
+                else None
+            )
+            record_job_progress(
+                session,
+                job,
+                stage=ProgressStage.CLEANUP,
+                state=(
+                    ProgressState.FAILED
+                    if cleanup_result.failed
+                    else ProgressState.COMPLETED
+                ),
+                completed=cleanup_result.completed + cleanup_result.failed,
+                total=cleanup_result.completed + cleanup_result.failed,
+                succeeded=cleanup_result.completed,
+                failed=cleanup_result.failed,
+                skipped=cleanup_result.skipped,
+                message=job.current_stage,
+            )
+            await session.commit()
 
 
 async def _apply_version_recommendations(session: AsyncSession, job: OrganizeJob) -> None:
@@ -936,6 +984,7 @@ async def _apply_version_recommendations(session: AsyncSession, job: OrganizeJob
             await session.scalars(
                 select(MediaMatch)
                 .join(SourceItem)
+                .options(selectinload(MediaMatch.source_item))
                 .where(
                     SourceItem.job_id == job.id,
                     MediaMatch.decision.in_(
@@ -952,30 +1001,100 @@ async def _apply_version_recommendations(session: AsyncSession, job: OrganizeJob
     for group_matches in groups.values():
         if len(group_matches) == 1:
             group_matches[0].version_recommendation = "SINGLE"
+            group_matches[0].quality_profile = {
+                **group_matches[0].quality_profile,
+                "recommended": True,
+                "selected": True,
+                "selection_mode": "SINGLE",
+                "selection_rank": 1,
+            }
             continue
-        recommended = max(group_matches, key=lambda item: item.version_score)
-        for media_match in group_matches:
-            media_match.version_recommendation = "PENDING"
-            media_match.decision = MatchDecision.REVIEW
+        preference = _quality_profile_for_job(job)
+        keep_count = _version_keep_count(job)
+        ranked_matches = sorted(
+            group_matches,
+            key=lambda item: version_selection_sort_key(
+                score=item.version_score,
+                size_bytes=_quality_size_bytes(item),
+                stable_name=item.source_item.relative_path or item.source_item.filename,
+                preference=preference,
+            ),
+        )
+        selected_count = len(ranked_matches) if keep_count == 0 else min(
+            keep_count, len(ranked_matches)
+        )
+        selected_ids = {item.id for item in ranked_matches[:selected_count]}
+        for rank, media_match in enumerate(ranked_matches, start=1):
+            is_selected = media_match.id in selected_ids
+            media_match.version_recommendation = (
+                "CONFIRMED" if is_selected else "NOT_SELECTED"
+            )
+            if not is_selected:
+                media_match.decision = MatchDecision.IGNORED
             media_match.decision_reasons = [
-                *media_match.decision_reasons,
+                reason
+                for reason in media_match.decision_reasons
+                if reason.get("code")
+                not in {
+                    "VERSION_CONFIRMATION_REQUIRED",
+                    "VERSION_AUTO_SELECTED",
+                    "VERSION_AUTO_SKIPPED",
+                }
+            ]
+            media_match.decision_reasons.append(
                 {
-                    "code": "VERSION_CONFIRMATION_REQUIRED",
-                    "message": (
-                        "检测到同一内容的多个版本；当前为推荐版本，确认后执行"
-                        if media_match.id == recommended.id
-                        else "检测到同一内容的多个版本；请与推荐版本比较后选择"
+                    "code": (
+                        "VERSION_AUTO_SELECTED" if is_selected else "VERSION_AUTO_SKIPPED"
                     ),
-                    "severity": "WARNING",
+                    "message": (
+                        f"按{_quality_profile_label(preference)}自动保留，版本排序第 {rank}"
+                        if is_selected
+                        else f"按{_quality_profile_label(preference)}自动跳过，版本排序第 {rank}"
+                    ),
+                    "severity": "INFO",
                     "overridable": True,
                     "origin": "QUALITY_PROFILE",
-                },
-            ]
+                }
+            )
             media_match.quality_profile = {
                 **media_match.quality_profile,
-                "recommended": media_match.id == recommended.id,
-                "recommendation_reason": "按当前质量偏好得分最高",
+                "recommended": rank == 1,
+                "selected": is_selected,
+                "selection_mode": "AUTO",
+                "selection_rank": rank,
+                "selection_keep_count": keep_count,
+                "recommendation_reason": (
+                    f"按{_quality_profile_label(preference)}自动排序；"
+                    f"每组保留{'全部' if keep_count == 0 else selected_count}个版本"
+                ),
             }
+
+
+def _quality_profile_for_job(job: OrganizeJob) -> QualityProfile:
+    try:
+        return QualityProfile(
+            str(job.config.get("quality_profile", QualityProfile.QUALITY.value))
+        )
+    except ValueError:
+        return QualityProfile.QUALITY
+
+
+def _version_keep_count(job: OrganizeJob) -> int:
+    value = job.config.get("version_keep_count", 1)
+    return value if isinstance(value, int) and 0 <= value <= 3 else 1
+
+
+def _quality_size_bytes(media_match: MediaMatch) -> int:
+    value = media_match.quality_profile.get("size_bytes", 0)
+    return value if isinstance(value, int) else 0
+
+
+def _quality_profile_label(preference: QualityProfile) -> str:
+    return {
+        QualityProfile.QUALITY: "质量优先规则",
+        QualityProfile.COMPATIBILITY: "兼容优先规则",
+        QualityProfile.SPACE_SAVING: "节省空间规则",
+    }[preference]
 
 
 def _summarize_decisions(

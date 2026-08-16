@@ -94,6 +94,19 @@ def version_group_key(
     return sha256(raw.encode()).hexdigest()[:32]
 
 
+def version_selection_sort_key(
+    *,
+    score: float,
+    size_bytes: int,
+    stable_name: str,
+    preference: QualityProfile,
+) -> tuple[float, int, str]:
+    """Build a deterministic best-first key for versions with equal profile scores."""
+
+    size_key = size_bytes if preference == QualityProfile.SPACE_SAVING else -size_bytes
+    return (-score, size_key, stable_name.casefold())
+
+
 def _first_token(haystack: str, scores: dict[str, int]) -> str:
     return next((token for token in scores if token in haystack), "UNKNOWN")
 

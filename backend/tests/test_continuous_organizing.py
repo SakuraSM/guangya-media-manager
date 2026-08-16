@@ -1,22 +1,29 @@
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.domain import (
     JobTriggerType,
     LibraryCategory,
+    MatchDecision,
     MediaType,
     QualityProfile,
     RegionBucket,
     RuleScheduleType,
 )
-from app.models import Base, OrganizeJob, OrganizeRule
+from app.models import Base, MediaMatch, OrganizeJob, OrganizeRule, SourceItem
 from app.providers.base import CloudNode
 from app.services.incremental_scan import IncrementalDirectoryScanner
 from app.services.media_classification import apply_output_layout, classify_media
 from app.services.organize_rules import OrganizeRuleError, next_run_at
-from app.services.quality import build_quality_decision, version_group_key
+from app.services.organizer_scan import _apply_version_recommendations
+from app.services.quality import (
+    build_quality_decision,
+    version_group_key,
+    version_selection_sort_key,
+)
 
 
 def test_classification_uses_tmdb_genre_and_origin() -> None:
@@ -85,6 +92,114 @@ def test_quality_profile_recommends_remux_over_web_release() -> None:
         edition="",
         part_number=2,
     )
+
+
+def test_version_selection_tie_breaker_matches_profile_intent() -> None:
+    larger_quality = version_selection_sort_key(
+        score=100,
+        size_bytes=20,
+        stable_name="larger.mkv",
+        preference=QualityProfile.QUALITY,
+    )
+    smaller_quality = version_selection_sort_key(
+        score=100,
+        size_bytes=10,
+        stable_name="smaller.mkv",
+        preference=QualityProfile.QUALITY,
+    )
+    larger_space_saving = version_selection_sort_key(
+        score=100,
+        size_bytes=20,
+        stable_name="larger.mkv",
+        preference=QualityProfile.SPACE_SAVING,
+    )
+    smaller_space_saving = version_selection_sort_key(
+        score=100,
+        size_bytes=10,
+        stable_name="smaller.mkv",
+        preference=QualityProfile.SPACE_SAVING,
+    )
+
+    assert larger_quality < smaller_quality
+    assert smaller_space_saving < larger_space_saving
+
+
+@pytest.mark.parametrize(
+    ("keep_count", "expected_selected"),
+    ((1, {"best"}), (0, {"best", "other"})),
+)
+async def test_version_groups_are_selected_automatically(
+    keep_count: int,
+    expected_selected: set[str],
+) -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        job = OrganizeJob(
+            id="job",
+            name="自动选版",
+            source_directory_id="source",
+            source_directory_path="/source",
+            target_directory_id="target",
+            target_directory_path="/target",
+            config={
+                "quality_profile": QualityProfile.QUALITY.value,
+                "version_keep_count": keep_count,
+            },
+        )
+        session.add(job)
+        session.add_all(
+            [
+                _version_source("best", score=120, size_bytes=20),
+                _version_source("other", score=80, size_bytes=10),
+            ]
+        )
+        await session.commit()
+
+        await _apply_version_recommendations(session, job)
+        await session.commit()
+        matches = list((await session.scalars(select(MediaMatch))).all())
+
+    await engine.dispose()
+    selected = {
+        media_match.id
+        for media_match in matches
+        if media_match.version_recommendation == "CONFIRMED"
+    }
+    assert selected == expected_selected
+    assert all(media_match.version_recommendation != "PENDING" for media_match in matches)
+    assert {
+        media_match.id
+        for media_match in matches
+        if media_match.decision == MatchDecision.IGNORED
+    } == ({"best", "other"} - expected_selected)
+    assert all(
+        media_match.quality_profile["selection_mode"] == "AUTO"
+        for media_match in matches
+    )
+
+
+def _version_source(match_id: str, *, score: float, size_bytes: int) -> SourceItem:
+    source_item = SourceItem(
+        id=f"source-{match_id}",
+        job_id="job",
+        cloud_file_id=f"cloud-{match_id}",
+        source_path=f"/source/{match_id}.mkv",
+        relative_path=f"{match_id}.mkv",
+        filename=f"{match_id}.mkv",
+        extension=".mkv",
+    )
+    source_item.media_match = MediaMatch(
+        id=match_id,
+        decision=MatchDecision.AUTO_APPROVED,
+        version_group_key="same-content",
+        version_score=score,
+        quality_profile={"size_bytes": size_bytes},
+    )
+    return source_item
 
 
 def test_cron_schedule_uses_rule_timezone() -> None:

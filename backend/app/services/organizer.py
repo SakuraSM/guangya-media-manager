@@ -35,7 +35,11 @@ from app.schemas import (
     UpdateMatchRequest,
 )
 from app.schemas import MatchCandidate as MatchCandidateSchema
-from app.services.match_review_state import is_match_approved, is_match_review_pending
+from app.services.match_review_state import (
+    decision_for_version,
+    is_match_approved,
+    is_match_review_pending,
+)
 from app.services.media_classification import apply_output_layout
 from app.services.media_parser import (
     ParsedMediaName,
@@ -151,10 +155,14 @@ class OrganizerService:
             await self._scan_workflow.run(job_id)
             async with self._session_factory() as session:
                 job = await load_job(session, job_id)
-                should_auto_execute = job.status == JobStatus.READY and bool(
-                    job.config.get(
-                        "auto_execute_after_approval",
-                        False,
+                should_auto_execute = (
+                    job.status == JobStatus.READY
+                    and (job.approved_items or 0) > job.executed_items
+                    and bool(
+                        job.config.get(
+                            "auto_execute_after_approval",
+                            False,
+                        )
                     )
                 )
                 if should_auto_execute:
@@ -234,8 +242,10 @@ class OrganizerService:
                 raise
             async with self._session_factory() as session:
                 job = await load_job(session, job_id)
-                should_auto_execute = job.status == JobStatus.READY and bool(
-                    job.config.get("auto_execute_after_approval", False)
+                should_auto_execute = (
+                    job.status == JobStatus.READY
+                    and (job.approved_items or 0) > job.executed_items
+                    and bool(job.config.get("auto_execute_after_approval", False))
                 )
                 if should_auto_execute:
                     job.current_stage = "AI 审核完成，正在启动自动整理"
@@ -289,7 +299,7 @@ class OrganizerService:
             media_match.confidence = candidate_schema.score
             media_match.target_path = _target_path_for_candidate(media_match, candidate_schema)
 
-        media_match.decision = request.decision
+        media_match.decision = decision_for_version(media_match, request.decision)
         session.add(
             AuditEvent(
                 job_id=job_id,
@@ -402,8 +412,37 @@ class OrganizerService:
             media_match.decision_reasons = [
                 reason
                 for reason in media_match.decision_reasons
-                if reason.get("code") != "VERSION_CONFIRMATION_REQUIRED"
+                if reason.get("code")
+                not in {
+                    "VERSION_CONFIRMATION_REQUIRED",
+                    "VERSION_AUTO_SELECTED",
+                    "VERSION_AUTO_SKIPPED",
+                    "VERSION_MANUALLY_SELECTED",
+                    "VERSION_MANUALLY_SKIPPED",
+                }
             ]
+            media_match.decision_reasons.append(
+                {
+                    "code": (
+                        "VERSION_MANUALLY_SELECTED"
+                        if is_selected
+                        else "VERSION_MANUALLY_SKIPPED"
+                    ),
+                    "message": (
+                        "用户调整后保留该版本"
+                        if is_selected
+                        else "用户调整后跳过该版本"
+                    ),
+                    "severity": "INFO",
+                    "overridable": True,
+                    "origin": "QUALITY_PROFILE",
+                }
+            )
+            media_match.quality_profile = {
+                **media_match.quality_profile,
+                "selected": is_selected,
+                "selection_mode": "MANUAL_OVERRIDE",
+            }
         session.add(
             AuditEvent(
                 job_id=job_id,
@@ -467,7 +506,9 @@ class OrganizerService:
                 media_match,
                 candidate_schema,
             )
-            media_match.decision = MatchDecision.APPROVED
+            media_match.decision = decision_for_version(
+                media_match, MatchDecision.APPROVED
+            )
         session.add(
             AuditEvent(
                 job_id=job_id,
@@ -534,7 +575,7 @@ class OrganizerService:
                     media_match,
                     candidate_schema,
                 )
-            media_match.decision = request.decision
+            media_match.decision = decision_for_version(media_match, request.decision)
         session.add(
             AuditEvent(
                 job_id=job_id,
@@ -601,7 +642,7 @@ class OrganizerService:
         media_match.episode_numbers = list(parsed.episode_numbers)
         media_match.edition = parsed.edition
         media_match.confidence = confidence
-        media_match.decision = decision
+        media_match.decision = decision_for_version(media_match, decision)
         media_match.candidates = [candidate_to_dict(candidate) for candidate in candidates]
         media_match.target_path = (
             target_path_for(
@@ -723,7 +764,7 @@ class OrganizerService:
             media_match.parsed_title = parsed.title
             media_match.parsed_year = parsed.year
             media_match.confidence = confidence
-            media_match.decision = decision
+            media_match.decision = decision_for_version(media_match, decision)
             media_match.candidates = [
                 candidate_to_dict(candidate) for candidate in candidates
             ]
@@ -784,7 +825,9 @@ class OrganizerService:
         media_match.season_number = season_number
         media_match.episode_numbers = list(episode_numbers)
         media_match.confidence = 1
-        media_match.decision = MatchDecision.APPROVED
+        media_match.decision = decision_for_version(
+            media_match, MatchDecision.APPROVED
+        )
         media_match.candidates = [candidate_to_dict(candidate)]
         await session.execute(
             delete(MediaMatchEpisode).where(
@@ -909,7 +952,9 @@ class OrganizerService:
                 )
             )
             if season_number is None or not episode_numbers:
-                media_match.decision = MatchDecision.REVIEW
+                media_match.decision = decision_for_version(
+                    media_match, MatchDecision.REVIEW
+                )
                 media_match.target_path = ""
                 media_match.reason_codes = list(
                     dict.fromkeys(
@@ -942,7 +987,9 @@ class OrganizerService:
             media_match.episode_title = " / ".join(
                 episode.name for episode in episodes if episode.name
             )
-            media_match.decision = MatchDecision.APPROVED
+            media_match.decision = decision_for_version(
+                media_match, MatchDecision.APPROVED
+            )
             media_match.target_path = _target_path_for_candidate(
                 media_match,
                 validate_candidate(candidate_to_dict(candidate)),
@@ -1056,7 +1103,9 @@ class OrganizerService:
                 delete(MediaMatchEpisode).where(MediaMatchEpisode.media_match_id == media_match.id)
             )
             if season_number is None or not episode_numbers:
-                media_match.decision = MatchDecision.REVIEW
+                media_match.decision = decision_for_version(
+                    media_match, MatchDecision.REVIEW
+                )
                 media_match.target_path = ""
                 media_match.reason_codes = list(
                     dict.fromkeys(
@@ -1072,7 +1121,9 @@ class OrganizerService:
                 session, entity.id, season_number, episode_numbers, None
             )
             media_match.episode_title = " / ".join(episode.name for episode in episodes)
-            media_match.decision = MatchDecision.APPROVED
+            media_match.decision = decision_for_version(
+                media_match, MatchDecision.APPROVED
+            )
             media_match.reason_codes = list(
                 dict.fromkeys(
                     (

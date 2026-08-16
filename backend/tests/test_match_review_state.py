@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.domain import MatchDecision
 from app.models import Base, MediaMatch, OrganizeJob, SourceItem
 from app.services.match_review_state import (
+    decision_for_version,
     is_match_approved,
     is_match_review_pending,
     pending_review_filter,
@@ -40,6 +41,13 @@ def test_ignored_match_is_terminal_even_with_stale_version_state() -> None:
     media_match = _match(MatchDecision.IGNORED, "PENDING")
 
     assert is_match_review_pending(media_match) is False
+    assert is_match_approved(media_match) is False
+
+
+def test_unselected_version_cannot_be_reapproved_by_metadata_review() -> None:
+    media_match = _match(MatchDecision.IGNORED, "NOT_SELECTED")
+
+    assert decision_for_version(media_match, MatchDecision.APPROVED) == MatchDecision.IGNORED
     assert is_match_approved(media_match) is False
 
 
