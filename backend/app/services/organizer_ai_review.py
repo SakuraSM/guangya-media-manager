@@ -8,7 +8,11 @@ from sqlalchemy.orm import selectinload
 from app.domain import JobStatus, MatchDecision, ProgressStage, ProgressState
 from app.models import AuditEvent, MediaMatch, OrganizeJob, SourceItem
 from app.schemas import MatchCandidate as MatchCandidateSchema
-from app.services.match_review_state import is_match_approved, is_match_review_pending
+from app.services.match_review_state import (
+    decision_for_version,
+    is_match_approved,
+    is_match_review_pending,
+)
 from app.services.media_parser import ParsedMediaName, parse_media_filename
 from app.services.metadata import (
     AiRecognitionService,
@@ -350,7 +354,9 @@ async def _approve_group(
         media_match.media_entity_id = entity.id
         media_match.confidence = candidate.score
         media_match.target_path = _target_path_for_candidate(media_match, candidate)
-        media_match.decision = MatchDecision.APPROVED
+        media_match.decision = decision_for_version(
+            media_match, MatchDecision.APPROVED
+        )
         _append_reason(media_match, "AI_REVIEW_APPROVED")
         updated_items += 1
     return updated_items

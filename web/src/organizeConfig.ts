@@ -24,4 +24,5 @@ export const DEFAULT_ORGANIZE_CONFIG: OrganizeConfig = {
   output_layout: 'STANDARD',
   include_region_directory: true,
   quality_profile: 'QUALITY',
+  version_keep_count: 1,
 }

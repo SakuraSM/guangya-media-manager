@@ -466,7 +466,7 @@ class ExecutionWorkflow:
             .where(
                 SourceItem.job_id == job.id,
                 MediaMatch.decision.in_([MatchDecision.AUTO_APPROVED, MatchDecision.APPROVED]),
-                MediaMatch.version_recommendation != "PENDING",
+                MediaMatch.version_recommendation.in_(["SINGLE", "CONFIRMED"]),
             )
         )
         if job.status == JobStatus.PARTIAL_FAILED and active_match_ids:

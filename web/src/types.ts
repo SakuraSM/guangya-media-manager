@@ -243,6 +243,10 @@ export interface MediaMatch {
     size_bytes?: number
     preference?: QualityProfile
     recommended?: boolean
+    selected?: boolean
+    selection_mode?: 'SINGLE' | 'AUTO' | 'MANUAL_OVERRIDE'
+    selection_rank?: number
+    selection_keep_count?: number
     recommendation_reason?: string
     score_reason?: string
   }
@@ -442,6 +446,7 @@ export interface OrganizeConfig {
     output_layout: OutputLayout
     include_region_directory: boolean
     quality_profile: QualityProfile
+    version_keep_count: number
 }
 
 export interface CreateJobInput {

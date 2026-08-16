@@ -146,6 +146,30 @@ export function NewJobPanel({ onCreated, onCancel }: NewJobPanelProps) {
               <SelectItem value="SPACE_SAVING">节省空间</SelectItem>
             </SelectContent>
           </Select>
+          <FieldDescription>
+            自动按分辨率、片源、HDR、编码、音频和文件大小综合排序。
+          </FieldDescription>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="version-keep-count">每组自动保留</FieldLabel>
+          <Select
+            value={String(config.version_keep_count)}
+            onValueChange={(value) =>
+              setConfig((current) => ({
+                ...current,
+                version_keep_count: Number(value),
+              }))
+            }
+          >
+            <SelectTrigger id="version-keep-count" className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="1">最优 1 个版本</SelectItem>
+              <SelectItem value="2">最优 2 个版本</SelectItem>
+              <SelectItem value="3">最优 3 个版本</SelectItem>
+              <SelectItem value="0">全部保留</SelectItem>
+            </SelectContent>
+          </Select>
+          <FieldDescription>同一电影版本或同一季集内自动选择，不再等待人工确认。</FieldDescription>
         </Field>
         <Field>
           <FieldLabel htmlFor="extras-policy">附加视频</FieldLabel>

@@ -405,23 +405,29 @@ function VersionDecisionPanel({
 }) {
   const initial = matches.filter((item) => item.version_recommendation === 'CONFIRMED').map((item) => item.id)
   const recommended = matches.find((item) => item.quality_profile.recommended)
+  const hasPendingSelection = matches.some((item) => item.version_recommendation === 'PENDING')
+  const automaticSelection = matches.some((item) => item.quality_profile.selection_mode === 'AUTO')
   const [selected, setSelected] = useState<Set<string>>(
     new Set(initial.length ? initial : recommended ? [recommended.id] : [matches[0]!.id]),
   )
   return (
-    <section className="rounded-lg border border-warning/40 bg-warning/5 p-3">
-      <h3 className="text-sm font-medium">多版本选择</h3>
-      <p className="mt-1 text-xs text-muted-foreground">系统只提供推荐；确认前不会执行这组文件。</p>
+    <section className="rounded-lg border border-primary/25 bg-primary/5 p-3">
+      <h3 className="text-sm font-medium">多版本{automaticSelection ? '自动选择' : '选择'}</h3>
+      <p className="mt-1 text-xs text-muted-foreground">
+        {hasPendingSelection
+          ? '旧任务仍需确认一次，确认后即可执行。'
+          : '系统已按任务规则自动选择；如有需要，可在执行前手动调整。'}
+      </p>
       <div className="mt-3 space-y-2">
         {[...matches].sort((a, b) => b.version_score - a.version_score).map((item) => (
           <label key={item.id} className="flex cursor-pointer items-start gap-2 rounded-md border bg-card p-2 text-xs">
             <Checkbox checked={selected.has(item.id)} onCheckedChange={(checked) => setSelected((current) => { const next = new Set(current); if (checked) next.add(item.id); else next.delete(item.id); return next })} />
             <span className="min-w-0 flex-1"><strong className="block truncate">{item.filename}</strong><small className="text-muted-foreground">{qualityLabel(item)} · 得分 {item.version_score}</small></span>
-            {item.quality_profile.recommended ? <Badge>推荐</Badge> : null}
+            {item.quality_profile.selected ? <Badge>已选</Badge> : item.quality_profile.recommended ? <Badge variant="secondary">最优</Badge> : null}
           </label>
         ))}
       </div>
-      <Button className="mt-3 w-full" size="sm" disabled={selected.size === 0 || isSaving} onClick={() => onConfirm([...selected])}>确认保留 {selected.size} 个版本</Button>
+      <Button className="mt-3 w-full" size="sm" disabled={selected.size === 0 || isSaving} onClick={() => onConfirm([...selected])}>{hasPendingSelection ? '确认' : '保存调整'}：保留 {selected.size} 个版本</Button>
     </section>
   )
 }
