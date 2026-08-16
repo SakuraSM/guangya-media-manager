@@ -4,6 +4,7 @@ import {
   MATCH_DECISION,
   REVIEW_FILTER,
   type Dashboard,
+  type FileOperationType,
   type Job,
   type JobPage,
   type JobProgressEvent,
@@ -21,6 +22,8 @@ import {
 } from './jobEventStreamContext'
 
 export type { EventStreamState } from './jobEventStreamContext'
+
+const REVIEW_FILTER_QUERY_KEY_INDEX = 4
 
 export function JobEventStreamProvider({ children }: { children: ReactNode }) {
   const eventStream = useJobEventStreamConnection()
@@ -127,7 +130,7 @@ function patchMatchQueries(queryClient: QueryClient, event: JobProgressEvent): b
     queryKey: ['matches', event.job_id],
   })) {
     if (!matchPage) continue
-    const reviewFilter = readReviewFilter(queryKey[4])
+    const reviewFilter = readReviewFilter(queryKey[REVIEW_FILTER_QUERY_KEY_INDEX])
     const currentMatch = matchPage.items.find((item) => item.id === event.match_id)
     if (!currentMatch) continue
     didPatch = true
@@ -156,7 +159,9 @@ function patchMatchQueries(queryClient: QueryClient, event: JobProgressEvent): b
 function patchOperationQueries(queryClient: QueryClient, event: JobProgressEvent): boolean {
   const sourceItemId = readString(event.payload.source_item_id)
   const executionStatus = readOperationStatus(event.payload.status)
-  if (!sourceItemId || !executionStatus) return false
+  const operationType = readOperationType(event.payload.operation_type)
+  if (!sourceItemId || !executionStatus || !operationType) return false
+  if (operationType !== 'COPY' && operationType !== 'TRASH') return true
   let didPatch = false
   for (const [queryKey, matchPage] of queryClient.getQueriesData<MediaMatchPage>({
     queryKey: ['matches', event.job_id],
@@ -167,16 +172,40 @@ function patchOperationQueries(queryClient: QueryClient, event: JobProgressEvent
       ...matchPage,
       items: matchPage.items.map((item) =>
         item.source_item_id === sourceItemId
-          ? {
-              ...item,
-              execution_status: executionStatus,
-              execution_error: readString(event.payload.error_message),
-            }
+          ? patchMatchOperation(item, {
+              operationType,
+              status: executionStatus,
+              errorMessage: readString(event.payload.error_message),
+            })
           : item,
       ),
     })
   }
   return didPatch
+}
+
+interface PatchMatchOperationInput {
+  operationType: 'COPY' | 'TRASH'
+  status: OperationStatus
+  errorMessage: string | null
+}
+
+function patchMatchOperation(
+  mediaMatch: MediaMatch,
+  input: PatchMatchOperationInput,
+): MediaMatch {
+  if (input.operationType === 'COPY') {
+    return {
+      ...mediaMatch,
+      execution_status: input.status,
+      execution_error: input.errorMessage,
+    }
+  }
+  return {
+    ...mediaMatch,
+    cleanup_status: input.status,
+    cleanup_error: input.errorMessage,
+  }
 }
 
 function readReviewFilter(value: unknown): ReviewFilter {
@@ -201,6 +230,13 @@ function readMatchDecision(value: unknown): MatchDecision | null {
 function readOperationStatus(value: unknown): OperationStatus | null {
   return value === 'PENDING' || value === 'RUNNING' || value === 'COMPLETED' ||
     value === 'SKIPPED' || value === 'FAILED'
+    ? value
+    : null
+}
+
+function readOperationType(value: unknown): FileOperationType | null {
+  return value === 'COPY' || value === 'MOVE' || value === 'RENAME' ||
+    value === 'UPLOAD' || value === 'TRASH'
     ? value
     : null
 }

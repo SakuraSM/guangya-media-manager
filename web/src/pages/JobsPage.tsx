@@ -6,6 +6,7 @@ import { PaginationControls } from '@/components/PaginationControls'
 import { ErrorNotice } from '@/components/ErrorNotice'
 import { LoadingScreen } from '@/components/LoadingScreen'
 import { NewJobPanel } from '@/components/NewJobPanel'
+import { FileOperationProgress } from '@/components/FileOperationProgress'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -162,6 +163,9 @@ export function JobsPage() {
                       <TableCell>
                         <span className="mb-2 block text-sm tabular-nums">{progress}%</span>
                         <Progress value={progress} aria-label={`执行进度 ${progress}%`} />
+                        <div className="mt-2">
+                          <FileOperationProgress job={job} isCompact />
+                        </div>
                       </TableCell>
                       <TableCell>
                         <StatusBadge status={job.status} />

@@ -84,10 +84,10 @@ function SourceMatchItem({
           <small className="block truncate text-[0.68rem] text-muted-foreground">
             {mediaMatch.filename} · {formatBytes(mediaMatch.size_bytes)}
           </small>
-          {mediaMatch.execution_error ? (
+          {mediaMatch.cleanup_error ?? mediaMatch.execution_error ? (
             <small className="mt-1 flex items-center gap-1 truncate text-[0.68rem] text-destructive">
               <CircleAlert aria-hidden="true" />
-              {mediaMatch.execution_error}
+              {mediaMatch.cleanup_error ?? mediaMatch.execution_error}
             </small>
           ) : null}
         </span>

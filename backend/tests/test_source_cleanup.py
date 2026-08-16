@@ -10,7 +10,14 @@ from app.domain import (
     OperationType,
     SourceClassification,
 )
-from app.models import Base, FileOperation, MediaMatch, OrganizeJob, SourceItem
+from app.models import (
+    Base,
+    FileOperation,
+    JobProgressEvent,
+    MediaMatch,
+    OrganizeJob,
+    SourceItem,
+)
 from app.providers.base import ProviderTask
 from app.services.organizer_cleanup import SourceCleanupExecutor
 from app.services.organizer_scan import ScanWorkflow
@@ -68,6 +75,15 @@ async def test_cleanup_moves_only_safe_selected_and_ignored_files_to_recycle_bin
                 )
             ).all()
         )
+        progress_events = list(
+            (
+                await session.scalars(
+                    select(JobProgressEvent).where(
+                        JobProgressEvent.event_type == "file-operation.updated"
+                    )
+                )
+            ).all()
+        )
 
     await engine.dispose()
     assert result.completed == 3
@@ -86,6 +102,8 @@ async def test_cleanup_moves_only_safe_selected_and_ignored_files_to_recycle_bin
     }
     assert all(operation.status == OperationStatus.COMPLETED for operation in operations)
     assert all(operation.target_path == "光鸭回收站" for operation in operations)
+    assert job.progress_detail["operations"]["TRASH"]["completed"] == 3
+    assert any(event.payload.get("source_filename") == "media.mkv" for event in progress_events)
 
 
 async def test_cleanup_failure_is_recorded_and_never_retried_automatically() -> None:

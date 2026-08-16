@@ -18,6 +18,7 @@ import { PERCENT_SCALE } from '@/constants'
 import { JOB_STATUS, type Job, type JobStatus } from '@/types'
 import { formatBytes } from '@/utils/format'
 import { StatusBadge } from '@/components/StatusBadge'
+import { FileOperationProgress } from '@/components/FileOperationProgress'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -202,6 +203,9 @@ export function ReviewCommandBar({
               <strong className="tabular-nums">{progressPercentage}%</strong>
             </div>
             <Progress value={progressPercentage} aria-label={`任务进度 ${progressPercentage}%`} />
+            <div className="mt-2">
+              <FileOperationProgress job={job} />
+            </div>
             <small className="mt-2 block text-xs text-muted-foreground">
               {progressDetailLabel(job)} · 已复制 {formatBytes(job.copied_bytes)}
             </small>

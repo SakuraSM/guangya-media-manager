@@ -179,6 +179,13 @@ export function MatchInspector({
               <AlertDescription>{mediaMatch.execution_error}</AlertDescription>
             </Alert>
           ) : null}
+          {mediaMatch.cleanup_error ? (
+            <Alert variant="destructive">
+              <CircleAlert aria-hidden="true" />
+              <AlertTitle>源文件清理失败</AlertTitle>
+              <AlertDescription>{mediaMatch.cleanup_error}</AlertDescription>
+            </Alert>
+          ) : null}
 
           <Field>
             <div className="flex items-center justify-between gap-2">

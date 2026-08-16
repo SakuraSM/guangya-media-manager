@@ -81,6 +81,8 @@ class SourceCleanupExecutor:
             state=ProgressState.RUNNING,
             total=len(operations),
             skipped=result.skipped,
+            operation_type=OperationType.TRASH,
+            current_filename=_operation_filename(operations[0].operation),
             message=f"将 {len(operations)} 个源文件移入回收站",
         )
         await session.commit()
@@ -96,23 +98,27 @@ class SourceCleanupExecutor:
             )
             completed += batch_completed
             failed += batch_failed
+            processed = completed + failed
+            is_complete = processed >= len(operations)
             record_job_progress(
                 session,
                 job,
                 stage=ProgressStage.CLEANUP,
                 state=(
                     ProgressState.FAILED
-                    if failed
-                    else ProgressState.RUNNING
-                    if completed < len(operations)
+                    if is_complete and failed
                     else ProgressState.COMPLETED
+                    if is_complete
+                    else ProgressState.RUNNING
                 ),
-                completed=completed + failed,
+                completed=processed,
                 total=len(operations),
                 succeeded=completed,
                 failed=failed,
                 skipped=result.skipped,
-                message=f"源文件清理 {completed + failed}/{len(operations)}",
+                operation_type=OperationType.TRASH,
+                current_filename=_operation_filename(batch[-1].operation),
+                message=f"源文件清理 {processed}/{len(operations)}",
             )
             await session.commit()
 
@@ -147,6 +153,20 @@ class SourceCleanupExecutor:
         operations: list[_PreparedCleanupOperation],
     ) -> tuple[int, int]:
         file_ids = [prepared.file_id for prepared in operations]
+        for prepared in operations:
+            operation = prepared.operation
+            operation.status = OperationStatus.RUNNING
+            record_file_operation_progress(
+                session,
+                job,
+                operation,
+                details={
+                    "recoverable": True,
+                    "message": "正在移入光鸭回收站",
+                },
+            )
+        await session.commit()
+
         try:
             task = await self._provider.trash_items(file_ids)
         except RuntimeError as error:
@@ -162,13 +182,6 @@ class SourceCleanupExecutor:
         for prepared in operations:
             operation = prepared.operation
             operation.provider_task_id = task.task_id
-            operation.status = OperationStatus.RUNNING
-            record_file_operation_progress(
-                session,
-                job,
-                operation,
-                details={"recoverable": True},
-            )
         await session.commit()
 
         try:
@@ -191,7 +204,10 @@ class SourceCleanupExecutor:
                 session,
                 job,
                 operation,
-                details={"recoverable": True},
+                details={
+                    "recoverable": True,
+                    "message": "已移入光鸭回收站",
+                },
             )
         await session.commit()
         return len(operations), 0
@@ -301,6 +317,10 @@ def _is_safe_cleanup_item(item: SourceItem, job: OrganizeJob) -> bool:
     if _is_within(item.source_path, job.target_directory_path):
         return False
     return "_整理中" not in PurePosixPath(item.source_path).parts
+
+
+def _operation_filename(operation: FileOperation) -> str:
+    return PurePosixPath(operation.source_path).name
 
 
 def _is_within(path: str, root: str) -> bool:

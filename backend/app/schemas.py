@@ -203,6 +203,8 @@ class MediaMatchView(ApiModel):
     version_recommendation: str = "SINGLE"
     execution_status: OperationStatus | None = None
     execution_error: str | None = None
+    cleanup_status: OperationStatus | None = None
+    cleanup_error: str | None = None
 
 
 class MediaMatchPage(BaseModel):
