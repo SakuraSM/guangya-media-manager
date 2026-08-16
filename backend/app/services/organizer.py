@@ -155,10 +155,14 @@ class OrganizerService:
             await self._scan_workflow.run(job_id)
             async with self._session_factory() as session:
                 job = await load_job(session, job_id)
-                should_auto_execute = job.status == JobStatus.READY and bool(
-                    job.config.get(
-                        "auto_execute_after_approval",
-                        False,
+                should_auto_execute = (
+                    job.status == JobStatus.READY
+                    and (job.approved_items or 0) > job.executed_items
+                    and bool(
+                        job.config.get(
+                            "auto_execute_after_approval",
+                            False,
+                        )
                     )
                 )
                 if should_auto_execute:
@@ -238,8 +242,10 @@ class OrganizerService:
                 raise
             async with self._session_factory() as session:
                 job = await load_job(session, job_id)
-                should_auto_execute = job.status == JobStatus.READY and bool(
-                    job.config.get("auto_execute_after_approval", False)
+                should_auto_execute = (
+                    job.status == JobStatus.READY
+                    and (job.approved_items or 0) > job.executed_items
+                    and bool(job.config.get("auto_execute_after_approval", False))
                 )
                 if should_auto_execute:
                     job.current_stage = "AI 审核完成，正在启动自动整理"

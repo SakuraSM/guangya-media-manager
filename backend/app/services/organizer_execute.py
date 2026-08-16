@@ -17,6 +17,7 @@ from app.providers.base import CloudNode, CloudProvider
 from app.services.metadata import TmdbService
 from app.services.naming import build_subtitle_filename
 from app.services.organizer_assets import AssetScraper
+from app.services.organizer_cleanup import SourceCleanupExecutor, SourceCleanupResult
 from app.services.organizer_cloud import (
     CloudLayout,
     MediaDirectories,
@@ -46,6 +47,7 @@ class ExecutionWorkflow:
         self._provider = provider
         self._asset_scraper = AssetScraper(provider, tmdb_service)
         self._copy_executor = CopyExecutor(provider)
+        self._source_cleanup = SourceCleanupExecutor(provider)
 
     async def run(self, job_id: str) -> None:
         async with self._session_factory() as session:
@@ -361,6 +363,30 @@ class ExecutionWorkflow:
                     ),
                 )
             )
+        has_pending_reviews = job.review_items > 0
+        cleanup_result = SourceCleanupResult()
+        cleanup_requested = bool(
+            job.config.get("trash_organized_source_files", False)
+            or job.config.get("trash_ignored_source_files", False)
+        )
+        cleanup_blocked = bool(commit_result.conflicts or warning_count)
+        if cleanup_requested and cleanup_blocked:
+            session.add(
+                AuditEvent(
+                    job_id=job.id,
+                    event_type="SOURCE_CLEANUP_SKIPPED",
+                    message="本批次存在发布冲突或刮削警告，未清理任何源文件",
+                    severity="warning",
+                    details={"source_modified": False},
+                )
+            )
+        elif cleanup_requested:
+            cleanup_result = await self._source_cleanup.execute(
+                session=session,
+                job=job,
+                matches=matches,
+                include_ignored=not has_pending_reviews,
+            )
         active_match_ids = _config_string_set(job.config, "_active_execution_match_ids")
         executed_match_ids = _config_string_set(job.config, "_executed_match_ids")
         executed_match_ids.update(active_match_ids)
@@ -370,11 +396,14 @@ class ExecutionWorkflow:
             if key != "_active_execution_match_ids"
         }
         job.config = {**job.config, "_executed_match_ids": sorted(executed_match_ids)}
-        has_warnings = bool(commit_result.conflicts or warning_count)
-        has_pending_reviews = job.review_items > 0
-        job.failed_items = warning_count + len(commit_result.conflicts)
+        has_warnings = bool(
+            commit_result.conflicts or warning_count or cleanup_result.failed
+        )
+        job.failed_items = (
+            warning_count + len(commit_result.conflicts) + cleanup_result.failed
+        )
         job.error_message = (
-            "本批次存在刮削警告或目标冲突，请查看执行记录"
+            "本批次存在刮削警告、目标冲突或源文件清理失败，请查看执行记录"
             if has_warnings
             else None
         )
@@ -403,7 +432,9 @@ class ExecutionWorkflow:
             completed=len(active_match_ids),
             total=len(active_match_ids),
             succeeded=len(active_match_ids),
-            failed=warning_count + len(commit_result.conflicts),
+            failed=(
+                warning_count + len(commit_result.conflicts) + cleanup_result.failed
+            ),
             message=job.current_stage,
         )
         session.add(
@@ -419,13 +450,21 @@ class ExecutionWorkflow:
                     if has_pending_reviews
                     else "整理任务已完成，部分冲突保留在暂存目录"
                     if commit_result.conflicts
-                    else "整理任务已完成，源目录未修改"
+                    else (
+                        f"整理任务已完成，{cleanup_result.completed} 个源文件已移入回收站"
+                        if cleanup_result.completed
+                        else "整理任务已完成，源目录未修改"
+                    )
                 ),
                 severity="warning" if has_warnings else "info",
                 details={
                     "conflicts": commit_result.conflicts,
                     "duplicates": commit_result.duplicates,
                     "asset_warnings": warning_count,
+                    "source_cleanup_completed": cleanup_result.completed,
+                    "source_cleanup_failed": cleanup_result.failed,
+                    "source_cleanup_skipped": cleanup_result.skipped,
+                    "source_cleanup_recoverable": True,
                 },
             )
         )

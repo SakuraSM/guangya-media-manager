@@ -58,6 +58,7 @@ from app.services.metadata_identity import (
     parse_nfo,
 )
 from app.services.metadata_providers import LocalMetadataProvider, TmdbMetadataProvider
+from app.services.organizer_cleanup import SourceCleanupExecutor
 from app.services.organizer_scan_progress import (
     RULE_PARSE_COMPLETE_PROGRESS,
     IncrementalMatchStore,
@@ -108,6 +109,7 @@ class ScanWorkflow:
     ) -> None:
         self._session_factory = session_factory
         self._provider = provider
+        self._source_cleanup = SourceCleanupExecutor(provider)
         self._tmdb_service = tmdb_service
         self._metadata_resolver = MetadataResolver(
             tmdb_service=tmdb_service,
@@ -933,6 +935,47 @@ class ScanWorkflow:
                 )
             )
         await session.commit()
+        if not decisions and job.config.get("trash_ignored_source_files", False):
+            cleanup_result = await self._source_cleanup.execute(
+                session=session,
+                job=job,
+                matches=[],
+                include_ignored=True,
+            )
+            job.status = (
+                JobStatus.PARTIAL_FAILED
+                if cleanup_result.failed
+                else JobStatus.COMPLETED
+            )
+            job.progress = 1
+            job.failed_items = cleanup_result.failed
+            job.current_stage = (
+                "无关文件清理存在失败项，请在光鸭中确认"
+                if cleanup_result.failed
+                else f"扫描完成，{cleanup_result.completed} 个无关文件已移入回收站"
+            )
+            job.error_message = (
+                "为避免对回收站文件重复删除，失败的清理操作不会自动重试"
+                if cleanup_result.failed
+                else None
+            )
+            record_job_progress(
+                session,
+                job,
+                stage=ProgressStage.CLEANUP,
+                state=(
+                    ProgressState.FAILED
+                    if cleanup_result.failed
+                    else ProgressState.COMPLETED
+                ),
+                completed=cleanup_result.completed + cleanup_result.failed,
+                total=cleanup_result.completed + cleanup_result.failed,
+                succeeded=cleanup_result.completed,
+                failed=cleanup_result.failed,
+                skipped=cleanup_result.skipped,
+                message=job.current_stage,
+            )
+            await session.commit()
 
 
 async def _apply_version_recommendations(session: AsyncSession, job: OrganizeJob) -> None:

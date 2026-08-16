@@ -108,6 +108,18 @@ class DemoGuangyaProvider:
         self._task_outputs[task_id] = moved_ids
         return ProviderTask(task_id=task_id)
 
+    async def trash_items(self, file_ids: list[str]) -> ProviderTask:
+        await asyncio.sleep(0.05)
+        task_id = f"trash-{uuid4()}"
+        trashed_ids: list[str] = []
+        for file_id in file_ids:
+            self._find_node(file_id)
+            self._nodes = [node for node in self._nodes if node.id != file_id]
+            self._file_contents.pop(file_id, None)
+            trashed_ids.append(file_id)
+        self._task_outputs[task_id] = trashed_ids
+        return ProviderTask(task_id=task_id)
+
     async def rename_item(self, file_id: str, new_name: str) -> None:
         await asyncio.sleep(0.02)
         node = self._find_node(file_id)

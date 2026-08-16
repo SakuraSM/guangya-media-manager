@@ -89,6 +89,8 @@ class JobConfig(BaseModel):
     include_region_directory: bool = True
     quality_profile: QualityProfile = QualityProfile.QUALITY
     version_keep_count: int = Field(default=1, ge=0, le=3)
+    trash_organized_source_files: bool = False
+    trash_ignored_source_files: bool = False
 
     @field_validator("title_extraction_regex")
     @classmethod

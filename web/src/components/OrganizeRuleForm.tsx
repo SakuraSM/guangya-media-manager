@@ -30,6 +30,8 @@ export function OrganizeRuleForm({
   const [qualityProfile, setQualityProfile] = useState<'QUALITY' | 'COMPATIBILITY' | 'SPACE_SAVING'>('QUALITY')
   const [versionKeepCount, setVersionKeepCount] = useState(1)
   const [titleExtractionRegex, setTitleExtractionRegex] = useState('')
+  const [trashOrganizedSource, setTrashOrganizedSource] = useState(false)
+  const [trashIgnoredSource, setTrashIgnoredSource] = useState(false)
 
   return (
     <form
@@ -51,6 +53,8 @@ export function OrganizeRuleForm({
             quality_profile: qualityProfile,
             version_keep_count: versionKeepCount,
             title_extraction_regex: titleExtractionRegex,
+            trash_organized_source_files: trashOrganizedSource,
+            trash_ignored_source_files: trashIgnoredSource,
           },
           schedule_type: scheduleType,
           interval_minutes: scheduleType === 'INTERVAL' ? intervalMinutes : null,
@@ -134,6 +138,20 @@ export function OrganizeRuleForm({
             <FieldDescription>版本会按上述规则自动选择；只有元数据待审核时才暂停。</FieldDescription>
           </div>
           <Switch id="rule-auto-execute" checked={autoExecute} onCheckedChange={setAutoExecute} />
+        </Field>
+        <Field orientation="horizontal" className="sm:col-span-2">
+          <div className="flex-1">
+            <FieldLabel htmlFor="rule-trash-organized">整理成功后清理源文件</FieldLabel>
+            <FieldDescription>将已发布媒体及关联字幕移入回收站；失败、取消或冲突时不清理。</FieldDescription>
+          </div>
+          <Switch id="rule-trash-organized" checked={trashOrganizedSource} onCheckedChange={setTrashOrganizedSource} />
+        </Field>
+        <Field orientation="horizontal" className="sm:col-span-2">
+          <div className="flex-1">
+            <FieldLabel htmlFor="rule-trash-ignored">清理明确无关文件</FieldLabel>
+            <FieldDescription>仅在任务最终完成时，将明确过滤的无关文件移入回收站。</FieldDescription>
+          </div>
+          <Switch id="rule-trash-ignored" checked={trashIgnoredSource} onCheckedChange={setTrashIgnoredSource} />
         </Field>
         <Field orientation="horizontal" className="sm:col-span-2">
           <div className="flex-1">

@@ -90,6 +90,8 @@ class GuangyaClientProtocol(Protocol):
 
     def fs_move(self, payload: object) -> object: ...
 
+    def fs_delete(self, payload: object) -> object: ...
+
     def fs_rename(self, payload: object) -> object: ...
 
     def download_url(self, file_id: str) -> object: ...
@@ -295,6 +297,17 @@ class GuangyaProvider:
                 "move files",
                 self._client.fs_move,
                 {"fileIds": file_ids, "parentId": target_parent_id},
+                kind=RequestKind.WRITE,
+            )
+        )
+        return ProviderTask(task_id=_extract_task_id(response))
+
+    async def trash_items(self, file_ids: list[str]) -> ProviderTask:
+        response = _require_mapping(
+            await self._call_client(
+                "move files to recycle bin",
+                self._client.fs_delete,
+                {"fileIds": file_ids},
                 kind=RequestKind.WRITE,
             )
         )

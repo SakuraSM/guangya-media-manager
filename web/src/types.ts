@@ -77,6 +77,7 @@ export type ProgressStage =
   | 'AUTO_EXECUTE'
   | 'COPY'
   | 'SCRAPE'
+  | 'CLEANUP'
   | 'FINALIZE'
 
 export type ProgressState =
@@ -447,6 +448,8 @@ export interface OrganizeConfig {
     include_region_directory: boolean
     quality_profile: QualityProfile
     version_keep_count: number
+    trash_organized_source_files: boolean
+    trash_ignored_source_files: boolean
 }
 
 export interface CreateJobInput {
